@@ -35,6 +35,7 @@ android {
                     "-DPython_LIBRARY=${pythonPrefix.resolve("lib/libpython3.14.so").absolutePath}",
                     "-DIconv_INCLUDE_DIR=${iconvPrefix.resolve("include").absolutePath}",
                     "-DIconv_LIBRARY=${iconvPrefix.resolve("lib/libiconv.a").absolutePath}",
+                    "-DGEMRB_ANDROID_ICONV_CHARSET_LIBRARY=${iconvPrefix.resolve("lib/libcharset.a").absolutePath}",
                     "-DSDL_BACKEND=SDL2",
                     "-DSTATIC_LINK=ON",
                     "-DUSE_SDLMIXER=OFF",
