@@ -10,6 +10,7 @@
 
 #include "Logging/Logging.h"
 
+#include <Python.h>
 #include <SDL.h>
 #include <android/log.h>
 #include <clocale> //language encoding
@@ -74,8 +75,13 @@ int main(int argc, char* argv[])
 		SanityCheck();
 
 		Interface gemrb(std::move(cfg));
-		__android_log_print(ANDROID_LOG_INFO, "GemRB", "GEMRB_ANDROID_GUI_INIT");
 		__android_log_print(ANDROID_LOG_INFO, "GemRB", "GEMRB_ANDROID_ENGINE_INIT");
+		if (!Py_IsInitialized()) {
+			__android_log_print(ANDROID_LOG_ERROR, "GemRB", "GEMRB_ANDROID_PYTHON_INIT_FAILED");
+			return GEM_ERROR;
+		}
+		__android_log_print(ANDROID_LOG_INFO, "GemRB", "GEMRB_ANDROID_PYTHON_INIT");
+		__android_log_print(ANDROID_LOG_INFO, "GemRB", "GEMRB_ANDROID_GUI_INIT");
 #if SDL_COMPILEDVERSION < SDL_VERSIONNUM(1, 3, 0)
 		SDL_ANDROID_SetApplicationPutToBackgroundCallback(&appPutToBackground, &appPutToForeground);
 #endif
