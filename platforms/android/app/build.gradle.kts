@@ -20,7 +20,7 @@ android {
         minSdk = 28
         targetSdk = 36
         versionCode = 1
-        versionName = "0.9.5-android-dev"
+        versionName = "0.9.5-android-m1"
 
         ndk {
             abiFilters += listOf("arm64-v8a")
@@ -47,8 +47,7 @@ android {
                     "-DUSE_VORBIS=OFF",
                     "-DOPENGL_BACKEND=None",
                     "-DSKIP_DEMO_DATA=ON",
-                    "-DUSE_TESTS=OFF",
-                    "-DGEMRB_ANDROID_BOOTSTRAP_ONLY=ON"
+                    "-DUSE_TESTS=OFF"
                 )
                 targets += listOf("gemrb")
             }
