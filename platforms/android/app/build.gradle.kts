@@ -8,6 +8,7 @@ val pythonPrefix = depsDir.resolve("python/prefix")
 val iconvPrefix = depsDir.resolve("libiconv/prefix")
 val sdl2Root = depsDir.resolve("sdl2")
 val androidBootstrap = rootProject.projectDir.resolve("cmake/AndroidBootstrap.cmake")
+val generatedAssetsDir = layout.buildDirectory.dir("generated/m1Assets")
 
 android {
     namespace = "org.gemrb.gemrb"
@@ -65,6 +66,7 @@ android {
         getByName("main") {
             java.srcDir(sdl2Root.resolve("android-project/app/src/main/java"))
             jniLibs.srcDir(depsDir.resolve("jniLibs"))
+            assets.srcDir(generatedAssetsDir)
         }
     }
 
@@ -89,6 +91,45 @@ val prepareAndroidDependencies by tasks.registering(Exec::class) {
     commandLine("bash", "scripts/prepare-dependencies.sh")
 }
 
-tasks.named("preBuild") {
+val stageAndroidRuntimeAssets by tasks.registering(Sync::class) {
     dependsOn(prepareAndroidDependencies)
+    into(generatedAssetsDir)
+
+    from(repoRoot.resolve("gemrb/GUIScripts")) {
+        into("runtime/gemrb/GUIScripts")
+        exclude("**/__pycache__/**", "**/*.pyc")
+    }
+    from(repoRoot.resolve("gemrb/override")) {
+        into("runtime/gemrb/override")
+    }
+    from(repoRoot.resolve("gemrb/unhardcoded")) {
+        into("runtime/gemrb/unhardcoded")
+    }
+    from(pythonPrefix.resolve("lib/python3.14")) {
+        into("runtime/python/lib/python3.14")
+        exclude(
+            "**/__pycache__/**",
+            "**/*.pyc",
+            "**/test/**",
+            "**/tests/**",
+            "idlelib/**",
+            "tkinter/**",
+            "turtledemo/**",
+            "ensurepip/**"
+        )
+    }
+
+    doLast {
+        val marker = generatedAssetsDir.get().file("runtime/VERSION").asFile
+        marker.parentFile.mkdirs()
+        marker.writeText("m1-1\n")
+    }
+}
+
+tasks.named("preBuild") {
+    dependsOn(stageAndroidRuntimeAssets)
+}
+
+tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }.configureEach {
+    dependsOn(stageAndroidRuntimeAssets)
 }
