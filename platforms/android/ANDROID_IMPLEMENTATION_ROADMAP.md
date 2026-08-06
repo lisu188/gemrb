@@ -6,486 +6,239 @@ Design: `platforms/android/ANDROID_MODERNIZATION.md`
 
 ## Objective
 
-Restore Android as a reproducible first-class GemRB build target in small, independently testable slices that can later be split into upstreamable pull requests.
+Restore Android as a reproducible first-class GemRB target in small, independently testable slices. The integration branch is `android-modernization`; commits should remain easy to split/cherry-pick for upstreaming.
 
-The implementation order is constrained by current GemRB CMake behavior:
+Current mandatory configure/link dependencies mean the first native milestone is not Python-free. M0 must satisfy SDL2, Python development files, zlib, iconv, static plugins, and the Android shared-library entry model before an APK can load `libmain.so`.
 
-- Python development files are mandatory at configure time.
-- Zlib is mandatory at configure time.
-- Iconv is mandatory at configure time.
-- `GUIScript` is always built.
-- static GemRB plugins are the preferred Android packaging model.
-- the Android application target must be a shared library loaded through SDL2.
+## Pinned baseline
 
-The first useful milestone is therefore not a Python-free GemRB build. It is a native Android APK that satisfies all mandatory link-time dependencies, loads `libmain.so`, emits a deterministic startup marker, and exits before requiring the full runtime data set.
+- AGP `9.4.0`
+- Gradle `9.6.0`
+- JDK `17`
+- compile/target SDK `36`
+- min SDK `28` initially
+- NDK `29.0.14206865`
+- SDL2 `2.32.10`
+- CPython Android `3.14.7`
+- GNU libiconv `1.19`
+- ABI `arm64-v8a`
 
-## Branch strategy
-
-Use `android-modernization` as the integration branch.
-
-Implementation slices should be committed so they can later be split or cherry-picked into smaller upstream PRs.
-
-Recommended commit families:
-
-1. Android Gradle shell
-2. SDL2 integration
-3. GemRB Android CMake target
-4. mandatory native dependencies
-5. static plugin linkage
-6. CI and native validation
-7. runtime bootstrap
-8. demo dependencies
-9. game import and storage
-10. lifecycle/input/audio completion
-
-## M0 — Native APK builds
+## M0 — Native APK
 
 ### Goal
 
-Produce an installable `arm64-v8a` debug APK that starts the SDL Android activity, loads GemRB's `libmain.so`, emits a known logcat marker, and exits cleanly before full GemRB initialization.
+Produce an installable arm64 debug APK that starts SDL, loads GemRB `libmain.so`, emits `GEMRB_ANDROID_NATIVE_START`, and exits cleanly before requiring the complete runtime asset set.
 
-### Slice 0.1 — Gradle project skeleton
+### 0.1 Gradle shell
 
-Create a conventional Android Gradle project under `platforms/android`.
+Create/maintain the modern Gradle application under `platforms/android` and pin SDK/NDK/CMake/JDK/ABI values.
 
-Expected files:
+Acceptance:
 
-```text
-platforms/android/
-├── settings.gradle.kts
-├── build.gradle.kts
-├── gradle.properties
-├── gradle/
-│   └── wrapper/
-├── gradlew
-├── gradlew.bat
-└── app/
-    ├── build.gradle.kts
-    ├── proguard-rules.pro
-    └── src/main/
-        ├── AndroidManifest.xml
-        ├── java/org/gemrb/gemrb/
-        └── res/
-```
+- Gradle configuration succeeds from a clean checkout.
+- new build does not depend on Ant/ndk-build.
 
-Pin:
+### 0.2 SDL2
 
-- Android Gradle Plugin
-- Gradle wrapper
-- JDK requirement
-- compile SDK
-- target SDK
-- min SDK
-- NDK version
-- CMake version used by Gradle
-- supported ABI list
+Fetch SDL2 `2.32.10` reproducibly with checksum verification. Expose SDL2 and SDL2main to GemRB CMake and compile the SDL Android Java activity sources.
 
-Initial ABI:
+Acceptance:
 
-```text
-arm64-v8a
-```
+- SDL2 builds for arm64.
+- `GemRBActivity extends SDLActivity` compiles.
 
-Do not enable additional ABIs until arm64 is stable.
+### 0.3 Android GemRB target
 
-Acceptance criteria:
+Change Android from `ADD_EXECUTABLE` to `ADD_LIBRARY(... SHARED)` with `OUTPUT_NAME main`.
 
-- `./gradlew tasks` succeeds.
-- `./gradlew assembleDebug` reaches native configuration.
-- no Ant/ndk-build files are required by the new Gradle build.
-
-### Slice 0.2 — Pin and integrate SDL2
-
-Use a pinned SDL2 release/tag, not an unpinned branch.
-
-Preferred structure:
-
-```text
-platforms/android/third_party/SDL2
-```
-
-or an equivalent reproducible pinned source mechanism.
-
-The Gradle native build should invoke CMake with SDL2 available as actual CMake targets.
-
-Required target model:
-
-```text
-SDL2::SDL2
-SDL2::SDL2main
-```
-
-If upstream SDL2 exposes un-namespaced targets for the selected release, normalize them in the Android CMake glue instead of spreading target-name conditionals through GemRB.
-
-Acceptance criteria:
-
-- SDL2 builds for `arm64-v8a`.
-- Java/Kotlin sources compile against SDL2's Android activity classes.
-- an SDL-hosted native library can be loaded by the APK.
-
-### Slice 0.3 — Convert GemRB Android target to `libmain.so`
-
-Modify `gemrb/CMakeLists.txt`.
-
-Current Android behavior:
-
-```text
-ADD_EXECUTABLE(gemrb ...)
-```
-
-Target behavior:
-
-```text
-ADD_LIBRARY(gemrb SHARED ...)
-OUTPUT_NAME main
-```
-
-Keep the existing Android entry sources:
-
-```text
-platforms/android/GemRB.cpp
-platforms/android/AndroidLogger.cpp
-```
-
-Link `SDL2main` on Android explicitly at the application target level.
-
-Do not attach `SDL2main` to the SDL video plugin.
-
-Acceptance criteria:
+Acceptance:
 
 - build produces `libmain.so`.
-- APK packages `libmain.so` and SDL2 correctly.
-- SDLActivity resolves and loads the expected application library.
+- SDL loads the application library.
 
-### Slice 0.4 — Android-aware SDL CMake configuration
+### 0.4 SDL CMake compatibility
 
-Current GemRB configuration assumes `find_package(SDL2)`.
+Reuse Android/in-tree SDL2 targets without requiring host-installed SDL2. Preserve non-Android `find_package(SDL2)` behavior. Keep SDL2main at the final application target, not in `SDLVideo`.
 
-Add an Android-specific path that accepts already-existing SDL2 CMake targets when SDL2 is included by the Android build.
+### 0.5 Python development/native libraries
 
-Desired behavior:
+Use official CPython Android `3.14.7` target-ABI headers and native libraries. `GUIScript` remains enabled.
 
-```text
-ANDROID + existing SDL2 target
-    -> reuse target
-    -> populate GemRB's internal SDL variables
-else
-    -> preserve current desktop find_package behavior
-```
+Acceptance:
 
-Do not regress non-Android platforms.
+- Python configuration succeeds.
+- `GUIScript` compiles/links.
+- packaged Python native libraries resolve for arm64.
 
-Acceptance criteria:
+### 0.6 zlib
 
-- Android does not require a host-installed SDL2 package.
-- desktop/macOS/Windows behavior is unchanged.
-- `SDLVideo` links to SDL2 without inheriting `SDL2main`.
+Resolve GemRB's mandatory zlib requirement with one intentional Android implementation.
 
-### Slice 0.5 — Integrate mandatory Python development files
+### 0.7 GNU libiconv
 
-Current GemRB always runs Python configuration and always builds `GUIScript`.
+Build GNU libiconv `1.19` from pinned source for Android and expose it to GemRB's existing iconv discovery.
 
-Use the official CPython Android distribution for the target ABI.
+Acceptance:
 
-M0 requires only what is necessary for configure/link:
+- configure succeeds.
+- representative Infinity Engine legacy-codepage conversion test passes.
 
-```text
-Python headers
-libpython3.14.so
-required companion native libraries
-CMake variables/targets needed by GemRB
-```
+### 0.8 Static plugins
 
-The Python standard library and Python runtime extraction are M1 work.
+Use `STATIC_LINK=ON` and preserve whole-archive semantics for required GemRB plugins.
 
-Prefer an Android-specific imported CMake target or compatibility variables so GemRB does not need a parallel source list.
+Acceptance:
 
-Acceptance criteria:
+- no runtime GemRB plugin `.so` discovery is required.
+- `libmain.so` has no unresolved plugin symbols.
 
-- `CONFIGURE_PYTHON()` succeeds for the Android target ABI.
-- `GUIScript` compiles and links.
-- packaged Python native libraries have no unresolved target-ABI dependencies.
+### 0.9 Native startup marker
 
-### Slice 0.6 — Integrate Zlib
+Emit deterministic `GEMRB_ANDROID_NATIVE_START` immediately after SDL reaches GemRB's native entry point. An Android-only guarded M0 early exit is permitted until M1 runtime data exists.
 
-GemRB requires Zlib during CMake configuration.
+### 0.10 16 KB validation
 
-Prefer either:
+Validate every packaged shared library for 16 KB page compatibility and packaging alignment.
 
-- Android/NDK-provided zlib if compatible with GemRB's usage and CMake discovery; or
-- a pinned source build exposed as a standard CMake target.
+### M0 done when
 
-Do not add a custom GemRB-only zlib API layer.
+- clean arm64 APK assembly succeeds;
+- `libmain.so`, SDL2, Python, zlib/iconv linkage, and static plugins are valid;
+- app launches on Android;
+- logcat contains `GEMRB_ANDROID_NATIVE_START`;
+- all packaged native libraries pass 16 KB checks;
+- CI reproduces and uploads the APK.
 
-Acceptance criteria:
-
-- `find_package(ZLIB REQUIRED)` succeeds in the Android configuration.
-- the final native dependency graph contains one intentional zlib implementation.
-
-### Slice 0.7 — Integrate GNU libiconv
-
-Do not rely on Bionic's limited iconv implementation for GemRB's legacy game encodings.
-
-Build GNU libiconv from pinned source for Android and expose it to GemRB's existing Iconv discovery or through a small Android compatibility layer.
-
-Target model:
-
-```text
-libiconv static library
-    -> GemRB core/plugins
-    -> libmain.so
-```
-
-Acceptance criteria:
-
-- `find_package(Iconv REQUIRED)` succeeds.
-- test conversions for at least one Windows code page used by Infinity Engine games pass on Android.
-- no dependency on unrestricted system iconv behavior remains.
-
-### Slice 0.8 — Static GemRB plugins
-
-Enable:
-
-```text
-STATIC_LINK=ON
-```
-
-Verify every Android-required plugin is included in the final whole-archive linkage.
-
-Pay particular attention to:
-
-- `GUIScript`
-- `SDLVideo`
-- filesystem/resource plugins needed before GUI startup
-
-Do not attempt dynamic plugin discovery inside the APK for the first implementation.
-
-Acceptance criteria:
-
-- no required GemRB plugin `.so` files are expected at runtime.
-- plugin registration succeeds in static-link mode.
-- `libmain.so` has no unresolved GemRB plugin symbols.
-
-### Slice 0.9 — Native startup marker
-
-Add a deterministic Android-native startup marker immediately after SDL transfers control to GemRB's `main()` and before full engine initialization.
-
-Example semantic marker:
-
-```text
-GEMRB_ANDROID_NATIVE_START
-```
-
-For M0, allow a temporary guarded early-exit path after the marker if full runtime data is not installed yet.
-
-The guard must be Android-only and explicitly temporary so it cannot affect desktop targets.
-
-Acceptance criteria:
-
-```text
-adb install -r app-debug.apk
-adb logcat
-```
-
-shows the marker after launching the app.
-
-### Slice 0.10 — 16 KB page-size validation
-
-Validate every packaged native library, including prebuilt Python libraries.
-
-CI must inspect:
-
-- `libmain.so`
-- SDL2
-- Python
-- companion Python native libraries
-- any prebuilt dependency
-
-Acceptance criteria:
-
-- packaged ELF segments meet current Android 16 KB page-size alignment requirements.
-- validation runs automatically in CI.
-
-## M1 — Runtime bootstrap and Python initialization
+## M1 — Runtime bootstrap and configured startup
 
 ### Goal
 
-Install GemRB/Python runtime assets into app-private storage, generate a valid configuration, start GemRB normally, and reach GUI script initialization.
+Install GemRB/Python assets into app-private storage, generate a valid managed config, explicitly pass that config to native GemRB, and reach GUI-script initialization.
 
-### Slice 1.1 — Introduce `BootstrapActivity`
+### 1.1 BootstrapActivity
 
-Create:
+Launcher responsibilities:
 
 ```text
 BootstrapActivity
-    -> validates runtime installation
-    -> installs/updates runtime assets
-    -> creates config
-    -> starts GemRBActivity
+  -> validate/install versioned runtime
+  -> validate/install Python stdlib
+  -> generate/update managed GemRB.cfg
+  -> validate selected game when present
+  -> start GemRBActivity
 ```
 
-`GemRBActivity` should remain a thin SDL2 host.
+`GemRBActivity` stays a thin SDL host.
 
-The old `GemRB.java` extraction behavior should not be copied directly because it:
+### 1.2 Versioned runtime installer
 
-- extracts on every SDL activity start;
-- deletes directories eagerly;
-- mixes setup and engine lifecycle;
-- uses obsolete storage assumptions.
-
-Acceptance criteria:
-
-- native SDL activity never starts before runtime installation is complete.
-- rotation/recreation of the bootstrap screen does not corrupt installation.
-
-### Slice 1.2 — Versioned runtime installer
-
-Package and install:
+Install into:
 
 ```text
-GUIScripts/
-override/
-unhardcoded/
-Python standard library
-required engine shaders/data
-configuration template
+filesDir/runtime/<runtime-version>/
 ```
 
-Install into an internal versioned directory:
+Use temporary directory -> validation -> atomic promotion. Never remove the last known-good runtime first.
+
+Assets include GUIScripts, override, unhardcoded, Python stdlib, required shaders/data, and config template.
+
+### 1.3 Explicit configuration loading
+
+Canonical config path:
 
 ```text
-files/runtime/<runtime-version>/
+<filesDir>/config/GemRB.cfg
 ```
 
-Use atomic installation:
+`BootstrapActivity` must finish generating and validating this file before launching the SDL activity.
+
+`GemRBActivity` overrides SDL2 `getArguments()` and passes:
 
 ```text
-runtime.tmp/
-    -> fully install
-    -> validate
-    -> rename to final version
+-c <absolute filesDir/config/GemRB.cfg>
 ```
 
-Never delete the last known-good runtime before the replacement is valid.
+Implementation contract:
 
-Acceptance criteria:
+```java
+@Override
+protected String[] getArguments() {
+    return new String[] { "-c", configPath };
+}
+```
 
-- first launch installs once.
-- second launch skips unnecessary extraction.
-- app update installs the new version safely.
+The path must come from trusted app-private state, not arbitrary external intent data.
 
-### Slice 1.3 — Python runtime paths
+Acceptance:
 
-Before `GUIScript` initialization, configure Python to use the installed Android runtime.
+- native argv contains the explicit `-c` argument;
+- GemRB logs/uses the managed config;
+- managed `GamePath`, `SavePath`, `CachePath`, and runtime paths take effect;
+- missing/invalid managed config fails visibly instead of silently selecting a different config.
 
-Required behavior:
+### 1.4 Python runtime paths
 
-- no dependency on system Python;
-- no pip requirement;
-- no subprocess requirement;
-- target-specific Python search path points into internal app storage.
+Configure Python home/search paths to the installed private runtime before `GUIScript` initializes Python. No system Python, pip, or subprocess dependency.
 
-Acceptance criteria:
+Acceptance:
 
-- Python interpreter initializes.
-- GemRB imports its GUI bootstrap modules.
-- logcat shows a deterministic GUI initialization marker.
+- Python initializes.
+- GemRB imports GUI bootstrap modules.
+- logcat reaches the M1 GUI-init marker.
 
-### Slice 1.4 — Android path model
-
-Replace the current Android entry-point behavior that maps `GEMRB_DATA` to external storage.
+### 1.5 Android path model
 
 Target layout:
 
 ```text
-internal filesDir
+filesDir/
 ├── runtime/
 ├── config/
 └── metadata/
 
-internal cacheDir
-└── gemrb-cache/
+cacheDir/
+└── gemrb/
 
-app-specific external files
+externalFilesDir/
 ├── games/
 └── saves/
 ```
 
-Use SDL Android storage helpers where they are sufficient; add JNI only where Android framework APIs are actually needed.
-
-Acceptance criteria:
-
-- GemRB engine runtime data resolves from internal storage.
-- cache uses internal cache storage.
-- no broad storage permission is requested.
-
-### Slice 1.5 — Configuration generation
-
-Generate `GemRB.cfg` from a versioned template.
-
-Android owns platform paths.
-
-GemRB owns game/engine settings.
-
-Initial Android-managed values:
-
-```text
-GamePath
-CachePath
-SavePath
-GUIScriptsPath / engine data path
-Python runtime path
-```
-
-Acceptance criteria:
-
-- no ADB manual editing required.
-- invalid/old path configuration can be regenerated safely.
+Runtime is internal; large game data and saves are app-specific external storage; cache is internal.
 
 ## M2 — GemRB demo
 
 ### Goal
 
-Run the GemRB demo on Android before importing commercial game data.
+Reach an interactive GemRB demo before importing commercial game data.
 
-### Slice 2.1 — FreeType
+Sequence:
 
-Build pinned FreeType for Android and expose it through existing GemRB discovery.
+1. pinned FreeType
+2. pinned PNG
+3. pinned Ogg/Vorbis
+4. package/install demo resources
+5. launch demo
 
-### Slice 2.2 — PNG
+Acceptance:
 
-Build pinned libpng for Android and expose it through existing GemRB discovery.
+- demo reaches interactive GUI;
+- fonts/PNG/resources render;
+- required demo audio format support works.
 
-### Slice 2.3 — Ogg/Vorbis
-
-Build pinned Ogg/Vorbis for Android and expose `vorbisfile` to GemRB.
-
-### Slice 2.4 — Demo assets and launch
-
-Package/install demo resources as needed and launch the GemRB demo.
-
-Acceptance criteria:
-
-- demo reaches interactive GUI.
-- text renders correctly.
-- PNG resources load.
-- audio format support required by the demo works.
-
-## M3 — Real game loading
+## M3 — Real games
 
 ### Goal
 
-Import an Infinity Engine game and reach its main menu.
+Import at least one Infinity Engine game, reach its main menu, and verify save/load isolation.
 
-### Slice 3.1 — Storage Access Framework picker
+### 3.1 SAF picker
 
-Use Android's directory picker to obtain a source tree.
+Use Android directory picker for the source tree. Do not expose SAF `content://` directly to existing C++ filesystem APIs in the first implementation.
 
-Do not expose document-provider URIs directly to GemRB's existing filesystem APIs yet.
+### 3.2 Game importer
 
-### Slice 3.2 — Game importer
-
-Copy selected game data into:
+Assign each imported installation a stable application-managed `game-id` and copy into:
 
 ```text
 externalFilesDir/games/<game-id>/
@@ -493,270 +246,161 @@ externalFilesDir/games/<game-id>/
 
 Requirements:
 
-- preflight required size;
-- preflight available space;
-- progress reporting;
-- cancellation;
+- source-size/free-space preflight;
+- progress/cancellation;
 - temporary destination;
-- atomic rename on success;
-- cleanup on failure.
+- essential-file validation;
+- atomic promotion;
+- stale temporary cleanup.
 
-### Slice 3.3 — Game detection
+### 3.3 Game detection/configuration
 
-Detect supported game type from imported files and generate/update configuration accordingly.
+Detect game type and update the managed config for the selected imported installation.
 
-### Slice 3.4 — Saves and cache
-
-Use:
+Required values:
 
 ```text
-externalFilesDir/saves
-cacheDir/gemrb-cache
+GamePath = externalFilesDir/games/<game-id>/
+SavePath = externalFilesDir/saves/<game-id>/
 ```
 
-Document that app-specific external data is deleted on uninstall.
+A shared `externalFilesDir/saves` must never be used as `SavePath`.
 
-Plan explicit save export/import later.
+### 3.4 Save isolation
 
-Acceptance criteria:
+GemRB may append the game's own `SaveDir` below `SavePath`, therefore the Android-provided root must already be unique per imported `game-id`.
 
-- at least one supported Infinity Engine game reaches main menu.
-- new save can be created and reloaded.
+Acceptance:
+
+- two imported games with overlapping `save`/`quicksave`/`autosave` directory names cannot see or overwrite each other's slots;
+- switching games updates `SavePath` to the selected game ID;
+- new save can be created/reloaded;
+- automated or integration test covers at least two distinct game IDs.
+
+### 3.5 Save durability
+
+Document that app-specific storage is removed on uninstall and add explicit export/import before release quality is claimed.
 
 ## M4 — Platform completeness
 
-### Slice 4.1 — OpenAL Soft
+### 4.1 OpenAL Soft
 
-Build pinned OpenAL Soft from source for Android.
+Restore pinned OpenAL Soft after core game loading works.
 
-Acceptance criteria:
+### 4.2 Lifecycle
 
-- music/SFX work.
-- background/foreground transitions do not leave audio stuck.
-
-### Slice 4.2 — Lifecycle
-
-Required supported behavior:
+Required behavior:
 
 ```text
-pause/resume                 required
-surface recreation           required
-background/foreground        required
-window resize                required
-process death                clean restart
+pause/resume              required
+surface recreation        required
+background/foreground     required
+window resize             required
+process death             clean restart
 ```
 
-Do not attempt restoration of live in-memory game state after process death.
+Do not attempt live in-memory session restoration after process death.
 
-### Slice 4.3 — Input
+### 4.3 Input
 
-Audit:
+Audit touch, mouse emulation, soft keyboard/IME, physical keyboard, and controller behavior exposed through SDL.
 
-- touch
-- mouse emulation
-- soft keyboard / IME
-- physical keyboard
-- gamepad behavior if SDL exposes it cleanly
+### 4.4 Movies/optional codecs
 
-Do not redesign the entire GemRB UI during platform restoration.
+Restore only after core gameplay works.
 
-### Slice 4.4 — Movies and optional codecs
+## M5 — Secondary ABI, CI hardening, cleanup, upstreaming
 
-Only add movie playback dependencies after core gameplay works.
-
-## M5 — CI, secondary ABI, cleanup, upstreaming
-
-### Slice 5.1 — Android GitHub Actions build
-
-CI should:
-
-1. install pinned JDK/SDK/NDK/CMake;
-2. fetch pinned dependencies;
-3. assemble debug APK;
-4. validate native libraries;
-5. upload APK artifact.
-
-### Slice 5.2 — x86_64
-
-Add x86_64 after arm64 is stable.
-
-Acceptance criteria:
-
-- same dependency set builds for x86_64.
-- official CPython x86_64 package integrates cleanly.
-
-### Slice 5.3 — Emulator smoke test
-
-Run x86_64 emulator CI and assert log markers.
+1. add `x86_64` using matching CPython package;
+2. add emulator smoke test;
+3. assert progressive log markers;
+4. produce APK/AAB artifacts;
+5. add save export/import;
+6. remove obsolete Ant/ndk-build pipeline;
+7. split integration commits into upstream-ready changes.
 
 Progressive markers:
 
 ```text
-M0: GEMRB_ANDROID_NATIVE_START
-M1: GEMRB_ANDROID_GUI_INIT
-M2: GEMRB_ANDROID_DEMO_READY
+M0 GEMRB_ANDROID_NATIVE_START
+M1 GEMRB_ANDROID_GUI_INIT
+M2 GEMRB_ANDROID_DEMO_READY
 ```
 
-### Slice 5.4 — Remove obsolete Android pipeline
-
-After the Gradle/CMake build is proven:
-
-Remove or archive obsolete:
+## First implementation sequence
 
 ```text
-prep_env.sh
-GEMRB_Android.mk
-GEMRB_Application.mk
-Ant project files
-legacy README instructions
+1  Gradle shell
+2  SDL2 source/targets
+3  libmain.so
+4  Android SDL CMake compatibility
+5  Python development/native files
+6  zlib
+7  GNU libiconv
+8  STATIC_LINK=ON
+9  native startup marker
+10 arm64 APK
+11 16 KB validation
+12 CI assembly/artifact
+13 BootstrapActivity
+14 versioned runtime installer
+15 explicit -c managed-config argument
+16 Python stdlib/runtime initialization
+17 internal runtime/cache path model
+18 FreeType
+19 PNG
+20 Ogg/Vorbis
+21 GemRB demo
+22 SAF importer + stable game-id
+23 per-game GamePath/SavePath
+24 real game main menu + save/load isolation
+25 OpenAL
+26 lifecycle/input hardening
+27 x86_64 + emulator CI
+28 obsolete build cleanup
 ```
-
-Do this separately from initial bring-up so regressions are easier to diagnose.
-
-### Slice 5.5 — Save export/import
-
-Add a user-visible mechanism to export and restore saves outside app-specific storage.
-
-### Slice 5.6 — Upstream PR split
-
-Recommended upstream order:
-
-1. CMake: Android shared target + SDL target compatibility
-2. Android Gradle/SDL shell
-3. Python/Zlib/Iconv Android dependency integration
-4. runtime bootstrap/storage
-5. demo dependencies
-6. game importer
-7. lifecycle/audio/input
-8. CI and obsolete-build cleanup
-
-## First implementation branch sequence
-
-Within `android-modernization`, implement in this exact order:
-
-```text
-1. Gradle shell
-2. SDL2 source/targets
-3. libmain.so
-4. Android SDL CMake compatibility
-5. Python development/native files
-6. Zlib
-7. GNU libiconv
-8. STATIC_LINK=ON
-9. native startup marker
-10. arm64 APK
-11. 16 KB validation
-12. CI assembly
-13. BootstrapActivity
-14. runtime installer
-15. Python stdlib/runtime initialization
-16. Android path/config generation
-17. FreeType
-18. PNG
-19. Ogg/Vorbis
-20. GemRB demo
-21. SAF importer
-22. real game main menu
-23. OpenAL
-24. lifecycle/input hardening
-25. x86_64 + emulator CI
-26. obsolete Android build cleanup
-```
-
-## M0 file-level change map
-
-Likely existing files to modify:
-
-```text
-gemrb/CMakeLists.txt
-cmake/GemRBFunctions.cmake or equivalent SDL/Python configuration helpers
-platforms/android/GemRB.cpp
-platforms/android/AndroidLogger.cpp
-```
-
-New Android Gradle/CMake files will live under:
-
-```text
-platforms/android/app/
-platforms/android/gradle/
-platforms/android/cmake/
-platforms/android/third_party/ or equivalent dependency location
-```
-
-Avoid replacing GemRB's top-level CMake project with an Android-specific native source manifest.
 
 ## Testing gates
 
 ### Gate A — Configure
 
-Android CMake configure succeeds with:
-
-```text
-Python
-Zlib
-GNU libiconv
-SDL2
-Threads
-STATIC_LINK
-```
+Android configuration resolves SDL2, Python, zlib, GNU libiconv, Threads, and static linking.
 
 ### Gate B — Link
 
-`libmain.so` links successfully with all required static GemRB plugins.
+`libmain.so` links all required static GemRB plugins.
 
 ### Gate C — Package
 
-Gradle assembles an arm64 debug APK containing all required native `.so` files.
+Gradle assembles an arm64 debug APK with all required `.so` files.
 
 ### Gate D — Native launch
 
-APK launches and prints:
+APK launch emits `GEMRB_ANDROID_NATIVE_START`.
 
-```text
-GEMRB_ANDROID_NATIVE_START
-```
+### Gate E — Configured runtime launch
 
-### Gate E — Runtime launch
-
-After M1, GemRB reaches GUI script initialization.
+Managed `GemRB.cfg` is passed explicitly with `-c` and GemRB reaches Python/GUI initialization.
 
 ### Gate F — Demo
 
-After M2, GemRB demo reaches an interactive screen.
+Demo reaches an interactive screen.
 
 ### Gate G — Real game
 
-After M3, a supported Infinity Engine game reaches main menu and can save/load.
+A supported game reaches main menu and save/load works with per-game save isolation.
 
 ## Risks to validate early
 
-1. CPython Android package compatibility with GemRB's current CMake `FindPython` behavior.
-2. CPython companion native library packaging and loading order.
-3. SDL2 target naming/version differences.
-4. static plugin registration/link order on Android/LLD.
-5. GNU libiconv CMake discovery integration.
-6. 16 KB compatibility of every prebuilt Python library.
-7. Android linker behavior around whole-archive static plugins.
-8. runtime path assumptions in GemRB core and Python initialization.
-9. game size and import performance for multi-gigabyte installs.
-10. lifecycle behavior after SDL surface recreation.
-
-## Definition of M0 done
-
-M0 is complete only when all of the following are true:
-
-- Gradle build is reproducible from a clean checkout.
-- toolchain and dependency versions are pinned.
-- `arm64-v8a` APK assembles.
-- GemRB is built as `libmain.so`.
-- SDL2/SDL2main are linked correctly.
-- Python target headers/libraries are present.
-- Zlib is resolved.
-- GNU libiconv is resolved.
-- static GemRB plugins link successfully.
-- app launches on Android.
-- logcat shows `GEMRB_ANDROID_NATIVE_START`.
-- all packaged native libraries pass 16 KB page-size validation.
-- CI reproduces the APK build.
-
-Only after this gate should implementation proceed to runtime extraction and actual Python/GemRB startup.
+1. CPython package interaction with GemRB `FindPython`.
+2. CPython companion native-library packaging/loading.
+3. SDL2 target naming and Android Java integration.
+4. static plugin registration/link order under LLD.
+5. GNU libiconv discovery/linkage.
+6. 16 KB compatibility of prebuilt Python libraries.
+7. Android whole-archive linker behavior.
+8. runtime/Python path assumptions.
+9. explicit config-argument propagation through SDLActivity.
+10. multi-gigabyte import performance/free-space behavior.
+11. lifecycle behavior after surface recreation.
+12. per-game save identity/migration correctness.
