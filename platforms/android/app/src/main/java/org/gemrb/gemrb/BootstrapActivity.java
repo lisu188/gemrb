@@ -13,6 +13,8 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 
 public final class BootstrapActivity extends Activity {
     private static final String TAG = "GemRB";
@@ -79,9 +81,11 @@ public final class BootstrapActivity extends Activity {
         if (runtimeDir.exists()) {
             deleteTree(runtimeDir);
         }
-        if (!stagingDir.renameTo(runtimeDir)) {
-            throw new IOException("Cannot promote runtime staging directory");
-        }
+        Files.move(
+                stagingDir.toPath(),
+                runtimeDir.toPath(),
+                StandardCopyOption.ATOMIC_MOVE
+        );
         return runtimeDir;
     }
 
@@ -124,12 +128,12 @@ public final class BootstrapActivity extends Activity {
         File target = new File(configDir, "GemRB.cfg");
         File staging = new File(configDir, "GemRB.cfg.tmp");
         writeFile(staging, config);
-        if (target.exists() && !target.delete()) {
-            throw new IOException("Cannot replace managed GemRB.cfg");
-        }
-        if (!staging.renameTo(target)) {
-            throw new IOException("Cannot promote managed GemRB.cfg");
-        }
+        Files.move(
+                staging.toPath(),
+                target.toPath(),
+                StandardCopyOption.ATOMIC_MOVE,
+                StandardCopyOption.REPLACE_EXISTING
+        );
         return target;
     }
 
