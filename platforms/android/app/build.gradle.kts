@@ -11,13 +11,13 @@ val androidBootstrap = rootProject.projectDir.resolve("cmake/AndroidBootstrap.cm
 
 android {
     namespace = "org.gemrb.gemrb"
-    compileSdk = 37
+    compileSdk = 36
     ndkVersion = "29.0.14206865"
 
     defaultConfig {
         applicationId = "org.gemrb.gemrb"
         minSdk = 28
-        targetSdk = 37
+        targetSdk = 36
         versionCode = 1
         versionName = "0.9.5-android-dev"
 
