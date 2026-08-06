@@ -19,6 +19,7 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
+import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -29,7 +30,7 @@ public final class BootstrapActivity extends Activity {
 
     private TextView statusView;
     private Button launchDemoButton;
-    private Button launchImportedButton;
+    private LinearLayout importedGamesLayout;
     private Button importButton;
     private Button cancelButton;
     private File runtimeDir;
@@ -89,10 +90,12 @@ public final class BootstrapActivity extends Activity {
         launchDemoButton.setOnClickListener(view -> launchDemo());
         layout.addView(launchDemoButton);
 
-        launchImportedButton = new Button(this);
-        launchImportedButton.setVisibility(View.GONE);
-        launchImportedButton.setOnClickListener(view -> launchSelectedImportedGame());
-        layout.addView(launchImportedButton);
+        importedGamesLayout = new LinearLayout(this);
+        importedGamesLayout.setOrientation(LinearLayout.VERTICAL);
+        layout.addView(importedGamesLayout, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        ));
 
         importButton = new Button(this);
         importButton.setText("Import game folder");
@@ -131,25 +134,22 @@ public final class BootstrapActivity extends Activity {
         setStatus("GemRB runtime ready.");
         launchDemoButton.setVisibility(View.VISIBLE);
         importButton.setVisibility(View.VISIBLE);
-        refreshImportedGameButton();
+        refreshImportedGames();
     }
 
-    private void refreshImportedGameButton() {
-        String gameId = getSharedPreferences("bootstrap", MODE_PRIVATE)
-                .getString("selectedGameId", null);
-        if (gameId == null) {
-            launchImportedButton.setVisibility(View.GONE);
-            return;
+    private void refreshImportedGames() {
+        importedGamesLayout.removeAllViews();
+        List<GameRegistry.Entry> entries = GameRegistry.load(this);
+        for (GameRegistry.Entry entry : entries) {
+            File gamePath = managedGamePath(entry.gameId);
+            if (gamePath == null || findCaseInsensitive(gamePath, "chitin.key") == null) {
+                continue;
+            }
+            Button launchButton = new Button(this);
+            launchButton.setText("Launch " + entry.displayName);
+            launchButton.setOnClickListener(view -> launchImportedGame(entry));
+            importedGamesLayout.addView(launchButton);
         }
-        File gamePath = managedGamePath(gameId);
-        if (gamePath == null || findCaseInsensitive(gamePath, "chitin.key") == null) {
-            launchImportedButton.setVisibility(View.GONE);
-            return;
-        }
-        String name = getSharedPreferences("bootstrap", MODE_PRIVATE)
-                .getString("selectedGameName", "Imported game");
-        launchImportedButton.setText("Launch " + name);
-        launchImportedButton.setVisibility(View.VISIBLE);
     }
 
     private void chooseGameFolder() {
@@ -177,17 +177,13 @@ public final class BootstrapActivity extends Activity {
                     })
             );
 
-            getSharedPreferences("bootstrap", MODE_PRIVATE)
-                    .edit()
-                    .putString("selectedGameId", result.gameId)
-                    .putString("selectedGameName", result.displayName)
-                    .apply();
+            GameRegistry.add(this, result.gameId, result.displayName);
             launchGame(result.gamePath, result.gameId, "auto");
         } catch (Exception error) {
             fail("Game import failed", error);
             runOnUiThread(() -> {
                 setImporting(false);
-                refreshImportedGameButton();
+                refreshImportedGames();
             });
         }
     }
@@ -200,18 +196,18 @@ public final class BootstrapActivity extends Activity {
         new Thread(() -> launchGame(demoPath, "demo-bootstrap", "demo"), "GemRB-demo-launch").start();
     }
 
-    private void launchSelectedImportedGame() {
-        String gameId = getSharedPreferences("bootstrap", MODE_PRIVATE)
-                .getString("selectedGameId", null);
-        if (gameId == null) {
-            return;
-        }
-        File gamePath = managedGamePath(gameId);
-        if (gamePath == null) {
+    private void launchImportedGame(GameRegistry.Entry entry) {
+        File gamePath = managedGamePath(entry.gameId);
+        if (gamePath == null || findCaseInsensitive(gamePath, "chitin.key") == null) {
             setStatus("Imported game storage is unavailable.");
+            refreshImportedGames();
             return;
         }
-        new Thread(() -> launchGame(gamePath, gameId, "auto"), "GemRB-game-launch").start();
+        GameRegistry.select(this, entry.gameId, entry.displayName);
+        new Thread(
+                () -> launchGame(gamePath, entry.gameId, "auto"),
+                "GemRB-game-launch"
+        ).start();
     }
 
     private void launchGame(File gamePath, String saveId, String gameType) {
@@ -233,11 +229,17 @@ public final class BootstrapActivity extends Activity {
 
     private void setImporting(boolean importing) {
         launchDemoButton.setEnabled(!importing);
-        launchImportedButton.setEnabled(!importing);
+        setImportedButtonsEnabled(!importing);
         importButton.setEnabled(!importing);
         cancelButton.setVisibility(importing ? View.VISIBLE : View.GONE);
         if (importing) {
             setStatus("Scanning selected game folder…");
+        }
+    }
+
+    private void setImportedButtonsEnabled(boolean enabled) {
+        for (int i = 0; i < importedGamesLayout.getChildCount(); i++) {
+            importedGamesLayout.getChildAt(i).setEnabled(enabled);
         }
     }
 
@@ -292,32 +294,21 @@ public final class BootstrapActivity extends Activity {
         if (externalRoot == null) {
             throw new IOException("App-specific external storage is unavailable");
         }
-        File saveDir = new File(externalRoot, "saves/" + saveId);
+
+        File saveDir;
+        try {
+            saveDir = GamePaths.savePath(externalRoot, saveId);
+        } catch (IllegalArgumentException error) {
+            throw new IOException("Invalid managed game id", error);
+        }
+
         if ((!configDir.isDirectory() && !configDir.mkdirs())
                 || (!cacheDir.isDirectory() && !cacheDir.mkdirs())
                 || (!saveDir.isDirectory() && !saveDir.mkdirs())) {
             throw new IOException("Cannot create Android GemRB data directories");
         }
 
-        File gemrbData = new File(runtime, "gemrb");
-        String config =
-                "GameType=" + gameType + "\n" +
-                "GamePath=" + gamePath.getAbsolutePath() + "\n" +
-                "GemRBPath=" + gemrbData.getAbsolutePath() + "\n" +
-                "GUIScriptsPath=" + gemrbData.getAbsolutePath() + "\n" +
-                "GemRBOverridePath=" + gemrbData.getAbsolutePath() + "\n" +
-                "GemRBUnhardcodedPath=" + gemrbData.getAbsolutePath() + "\n" +
-                "SavePath=" + saveDir.getAbsolutePath() + "\n" +
-                "CachePath=" + cacheDir.getAbsolutePath() + "\n" +
-                "AudioDriver=none\n" +
-                "Logging=1\n" +
-                "SkipIntroVideos=1\n" +
-                "TouchInput=1\n" +
-                "MouseFeedback=3\n" +
-                "CaseSensitive=1\n" +
-                "Width=640\n" +
-                "Height=480\n";
-
+        String config = ManagedConfig.build(runtime, gamePath, saveDir, cacheDir, gameType);
         File target = new File(configDir, "GemRB.cfg");
         File staging = new File(configDir, "GemRB.cfg.tmp");
         writeFile(staging, config);
@@ -335,7 +326,12 @@ public final class BootstrapActivity extends Activity {
         if (externalRoot == null) {
             return null;
         }
-        return new File(externalRoot, "games/" + gameId);
+        try {
+            return GamePaths.gamePath(externalRoot, gameId);
+        } catch (IllegalArgumentException error) {
+            Log.w(TAG, "Ignoring invalid managed game id", error);
+            return null;
+        }
     }
 
     private void fail(String message, Exception error) {
