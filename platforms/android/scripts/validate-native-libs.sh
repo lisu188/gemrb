@@ -46,7 +46,8 @@ done
 for required_asset in \
     assets/runtime/VERSION \
     assets/runtime/gemrb/GUIScripts/GUICommon.py \
-    assets/runtime/python/lib/python3.14/os.py; do
+    assets/runtime/python/lib/python3.14/os.py \
+    assets/runtime/demo/chitin.key; do
     if ! unzip -Z1 "${APK}" | grep -Fxq "${required_asset}"; then
         echo "Required runtime asset missing from APK: ${required_asset}" >&2
         exit 1
