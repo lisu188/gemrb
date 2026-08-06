@@ -43,6 +43,18 @@ for required in libmain.so libSDL2.so libpython3.14.so; do
     fi
 done
 
+for required_marker in \
+    GEMRB_ANDROID_NATIVE_START \
+    GEMRB_ANDROID_CONFIGURED_START \
+    GEMRB_ANDROID_ENGINE_INIT \
+    GEMRB_ANDROID_PYTHON_INIT \
+    GEMRB_ANDROID_GUI_INIT; do
+    if ! grep -aFq "${required_marker}" "${LIB_DIR}/libmain.so"; then
+        echo "Required startup marker missing from libmain.so: ${required_marker}" >&2
+        exit 1
+    fi
+done
+
 for required_asset in \
     assets/runtime/VERSION \
     assets/runtime/gemrb/GUIScripts/GUICommon.py \
