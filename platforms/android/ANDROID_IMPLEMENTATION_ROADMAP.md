@@ -12,16 +12,36 @@ Current mandatory configure/link dependencies mean the first native milestone is
 
 ## Pinned baseline
 
-- AGP `9.4.0`
+- AGP `9.3.0`
 - Gradle `9.6.0`
 - JDK `17`
 - compile/target SDK `36`
 - min SDK `28` initially
 - NDK `29.0.14206865`
+- CMake `3.31.6`
 - SDL2 `2.32.10`
 - CPython Android `3.14.7`
 - GNU libiconv `1.19`
 - ABI `arm64-v8a`
+
+## Current implementation status
+
+M0 build/package gate is complete in CI. Android run `31093901189` produced and validated the first arm64 APK, including 16 KB alignment checks.
+
+The first M1 implementation slice is also build-complete:
+
+- `BootstrapActivity` is the launcher and installs a versioned app-private runtime;
+- runtime promotion and managed `GemRB.cfg` replacement use atomic same-filesystem moves;
+- `GemRBActivity` is internal-only and passes `-c <filesDir>/config/GemRB.cfg` through SDL2 `getArguments()`;
+- `PYTHONHOME`, `PYTHONPATH`, and `GEMRB_DATA` are configured before SDL/native startup;
+- GemRB no longer rewrites `GEMRB_DATA` to broad external storage;
+- GemRB runtime data and Python 3.14 stdlib are packaged and validated in the APK;
+- the repository demo is packaged as the temporary M1 startup fixture so `chitin.key` is available before real-game import exists;
+- native startup markers now distinguish native entry, configured entry, and successful `Interface` construction;
+- Android run `31099721437` passes assembly, runtime/native validation, artifact upload, and 16 KB checks at commit `346206413acd094c758a9bb343328759a90a6cbc`;
+- Linux test-runner and AppImage builders, plus style checks, also pass at that commit.
+
+Remaining M1 runtime gate: verify on Android hardware that startup reaches `GEMRB_ANDROID_CONFIGURED_START`, then `GEMRB_ANDROID_ENGINE_INIT`, and inspect the subsequent GUIScript/Python log. CI currently validates build/package structure but does not run an arm64 Android device/emulator.
 
 ## M0 — Native APK
 
@@ -212,12 +232,14 @@ Runtime is internal; large game data and saves are app-specific external storage
 
 Reach an interactive GemRB demo before importing commercial game data.
 
+The demo tree is already bundled as an M1 startup fixture so configured native startup can be tested with a real `chitin.key`; M2 still owns restoring and validating the dependencies needed to claim an interactive demo.
+
 Sequence:
 
 1. pinned FreeType
 2. pinned PNG
 3. pinned Ogg/Vorbis
-4. package/install demo resources
+4. validate packaged demo resources
 5. launch demo
 
 Acceptance:
@@ -323,7 +345,8 @@ Progressive markers:
 
 ```text
 M0 GEMRB_ANDROID_NATIVE_START
-M1 GEMRB_ANDROID_GUI_INIT
+M1 GEMRB_ANDROID_CONFIGURED_START
+M1 GEMRB_ANDROID_ENGINE_INIT
 M2 GEMRB_ANDROID_DEMO_READY
 ```
 
@@ -380,7 +403,7 @@ APK launch emits `GEMRB_ANDROID_NATIVE_START`.
 
 ### Gate E — Configured runtime launch
 
-Managed `GemRB.cfg` is passed explicitly with `-c` and GemRB reaches Python/GUI initialization.
+Managed `GemRB.cfg` is passed explicitly with `-c`, runtime/Python paths are app-private, and GemRB reaches Python/GUI initialization.
 
 ### Gate F — Demo
 
