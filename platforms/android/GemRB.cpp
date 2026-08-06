@@ -6,6 +6,9 @@
 
 #include "AndroidLogger.h"
 #include "Interface.h"
+#include "PluginMgr.h"
+
+#include "Logging/Logging.h"
 
 #include <SDL.h>
 #include <android/log.h>
@@ -55,25 +58,22 @@ int main(int argc, char* argv[])
 		setenv("SDL_VIDEO_X11_WMCLASS", argv[0], 0);
 	}
 
-// Prevent fragmentation of the heap by malloc (glibc).
-// The default threshold is 128*1024, which can result in a large memory usage
-// due to fragmentation since we use a lot of small objects. On the other hand
-// if the threshold is too low, free() starts to permanently ask the kernel
-// about shrinking the heap.
 #if defined(HAVE_UNISTD_H)
 	int pagesize = sysconf(_SC_PAGESIZE);
 #else
 	int pagesize = 4 * 1024;
 #endif
-	setenv("MALLOC_TRIM_THRESHOLD_", fmt::format("{}", 5 * pagesize), 1);
+	auto trimThreshold = fmt::format("{}", 5 * pagesize);
+	setenv("MALLOC_TRIM_THRESHOLD_", trimThreshold.c_str(), 1);
 
 	AddLogWriter(createAndroidLogger());
 	ToggleLogging(true);
 
-	SanityCheck();
-
 	try {
-		Interface gemrb(LoadFromArgs(argc, argv));
+		auto cfg = LoadFromArgs(argc, argv);
+		SanityCheck();
+
+		Interface gemrb(std::move(cfg));
 		__android_log_print(ANDROID_LOG_INFO, "GemRB", "GEMRB_ANDROID_ENGINE_INIT");
 #if SDL_COMPILEDVERSION < SDL_VERSIONNUM(1, 3, 0)
 		SDL_ANDROID_SetApplicationPutToBackgroundCallback(&appPutToBackground, &appPutToForeground);
@@ -85,6 +85,7 @@ int main(int argc, char* argv[])
 	}
 
 	VideoDriver.reset();
+	PluginMgr::Get()->RunCleanup();
 
 	return GEM_OK;
 }
