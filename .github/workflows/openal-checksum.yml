@@ -1,0 +1,24 @@
+name: OpenAL checksum probe
+
+on:
+  push:
+    branches:
+      - android-modernization
+    paths:
+      - '.github/workflows/openal-checksum.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  checksum:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Hash OpenAL Soft 1.25.2 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 5 --retry-all-errors \
+            --output openal-soft-1.25.2.tar.bz2 \
+            https://openal-soft.org/openal-releases/openal-soft-1.25.2.tar.bz2
+          sha256sum openal-soft-1.25.2.tar.bz2
