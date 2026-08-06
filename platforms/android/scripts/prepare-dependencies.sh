@@ -60,17 +60,42 @@ download() {
     local url="$1"
     local destination="$2"
     local expected="$3"
-    if [[ ! -f "${destination}" ]]; then
-        curl --fail --location --retry 3 --output "${destination}" "${url}"
+    local temporary="${destination}.tmp"
+
+    if [[ -f "${destination}" ]]; then
+        local cached
+        cached="$(sha256_file "${destination}")"
+        if [[ "${cached}" == "${expected}" ]]; then
+            return
+        fi
+        echo "Discarding corrupt cached download: ${destination}" >&2
+        rm -f "${destination}"
     fi
+
+    rm -f "${temporary}"
+    if ! curl \
+        --fail \
+        --location \
+        --retry 8 \
+        --retry-all-errors \
+        --retry-delay 2 \
+        --connect-timeout 20 \
+        --output "${temporary}" \
+        "${url}"; then
+        rm -f "${temporary}"
+        return 1
+    fi
+
     local actual
-    actual="$(sha256_file "${destination}")"
+    actual="$(sha256_file "${temporary}")"
     if [[ "${actual}" != "${expected}" ]]; then
-        echo "SHA-256 mismatch for ${destination}" >&2
+        echo "SHA-256 mismatch for ${url}" >&2
         echo "expected: ${expected}" >&2
         echo "actual:   ${actual}" >&2
+        rm -f "${temporary}"
         exit 1
     fi
+    mv "${temporary}" "${destination}"
 }
 
 resolve_ndk() {
