@@ -3,9 +3,13 @@ package org.gemrb.gemrb;
 import android.app.Activity;
 import android.content.Intent;
 import android.content.res.AssetManager;
+import android.net.Uri;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.Gravity;
+import android.view.View;
+import android.widget.Button;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import java.io.File;
@@ -15,43 +19,225 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
+import java.util.Locale;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class BootstrapActivity extends Activity {
     private static final String TAG = "GemRB";
-    private static final String RUNTIME_VERSION = "m1-2";
+    private static final String RUNTIME_VERSION = "m3-1";
+    private static final int REQUEST_IMPORT_GAME = 1001;
+
     private TextView statusView;
+    private Button launchDemoButton;
+    private Button launchImportedButton;
+    private Button importButton;
+    private Button cancelButton;
+    private File runtimeDir;
+    private AtomicBoolean importCancelled;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        createUi();
+        new Thread(this::prepareRuntime, "GemRB-bootstrap").start();
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQUEST_IMPORT_GAME || resultCode != RESULT_OK || data == null) {
+            return;
+        }
+        Uri treeUri = data.getData();
+        if (treeUri == null) {
+            setStatus("No game folder was selected.");
+            return;
+        }
+
+        try {
+            getContentResolver().takePersistableUriPermission(
+                    treeUri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+            );
+        } catch (SecurityException error) {
+            Log.w(TAG, "Document provider did not grant persistent read access", error);
+        }
+
+        setImporting(true);
+        importCancelled = new AtomicBoolean(false);
+        new Thread(() -> importGame(treeUri), "GemRB-game-import").start();
+    }
+
+    private void createUi() {
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.setGravity(Gravity.CENTER);
+        int padding = Math.round(24 * getResources().getDisplayMetrics().density);
+        layout.setPadding(padding, padding, padding, padding);
 
         statusView = new TextView(this);
         statusView.setGravity(Gravity.CENTER);
         statusView.setText("Preparing GemRB runtime…");
-        setContentView(statusView);
+        layout.addView(statusView, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        ));
 
-        Thread bootstrapThread = new Thread(this::bootstrap, "GemRB-bootstrap");
-        bootstrapThread.start();
+        launchDemoButton = new Button(this);
+        launchDemoButton.setText("Launch bundled demo");
+        launchDemoButton.setVisibility(View.GONE);
+        launchDemoButton.setOnClickListener(view -> launchDemo());
+        layout.addView(launchDemoButton);
+
+        launchImportedButton = new Button(this);
+        launchImportedButton.setVisibility(View.GONE);
+        launchImportedButton.setOnClickListener(view -> launchSelectedImportedGame());
+        layout.addView(launchImportedButton);
+
+        importButton = new Button(this);
+        importButton.setText("Import game folder");
+        importButton.setVisibility(View.GONE);
+        importButton.setOnClickListener(view -> chooseGameFolder());
+        layout.addView(importButton);
+
+        cancelButton = new Button(this);
+        cancelButton.setText("Cancel import");
+        cancelButton.setVisibility(View.GONE);
+        cancelButton.setOnClickListener(view -> {
+            if (importCancelled != null) {
+                importCancelled.set(true);
+                setStatus("Cancelling import…");
+            }
+        });
+        layout.addView(cancelButton);
+
+        setContentView(layout);
     }
 
-    private void bootstrap() {
+    private void prepareRuntime() {
         try {
-            File runtimeDir = ensureRuntime();
-            File configFile = writeManagedConfig(runtimeDir);
+            runtimeDir = ensureRuntime();
             getSharedPreferences("bootstrap", MODE_PRIVATE)
                     .edit()
                     .putString("activeRuntime", runtimeDir.getAbsolutePath())
+                    .apply();
+            runOnUiThread(this::showReadyUi);
+        } catch (Exception error) {
+            fail("Android runtime bootstrap failed", error);
+        }
+    }
+
+    private void showReadyUi() {
+        setStatus("GemRB runtime ready.");
+        launchDemoButton.setVisibility(View.VISIBLE);
+        importButton.setVisibility(View.VISIBLE);
+        refreshImportedGameButton();
+    }
+
+    private void refreshImportedGameButton() {
+        String gameId = getSharedPreferences("bootstrap", MODE_PRIVATE)
+                .getString("selectedGameId", null);
+        if (gameId == null) {
+            launchImportedButton.setVisibility(View.GONE);
+            return;
+        }
+        File gamePath = managedGamePath(gameId);
+        if (gamePath == null || findCaseInsensitive(gamePath, "chitin.key") == null) {
+            launchImportedButton.setVisibility(View.GONE);
+            return;
+        }
+        String name = getSharedPreferences("bootstrap", MODE_PRIVATE)
+                .getString("selectedGameName", "Imported game");
+        launchImportedButton.setText("Launch " + name);
+        launchImportedButton.setVisibility(View.VISIBLE);
+    }
+
+    private void chooseGameFolder() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        intent.addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        startActivityForResult(intent, REQUEST_IMPORT_GAME);
+    }
+
+    private void importGame(Uri treeUri) {
+        try {
+            GameImporter.Result result = GameImporter.importTree(
+                    this,
+                    treeUri,
+                    importCancelled,
+                    (copied, total, currentName) -> runOnUiThread(() -> {
+                        String progress;
+                        if (total > 0) {
+                            int percent = (int) Math.min(100, (copied * 100L) / total);
+                            progress = String.format(Locale.US, "Importing %d%% — %s", percent, currentName);
+                        } else {
+                            progress = "Importing — " + currentName;
+                        }
+                        setStatus(progress);
+                    })
+            );
+
+            getSharedPreferences("bootstrap", MODE_PRIVATE)
+                    .edit()
+                    .putString("selectedGameId", result.gameId)
+                    .putString("selectedGameName", result.displayName)
+                    .apply();
+            launchGame(result.gamePath, result.gameId, "auto");
+        } catch (Exception error) {
+            fail("Game import failed", error);
+            runOnUiThread(() -> {
+                setImporting(false);
+                refreshImportedGameButton();
+            });
+        }
+    }
+
+    private void launchDemo() {
+        if (runtimeDir == null) {
+            return;
+        }
+        File demoPath = new File(runtimeDir, "demo");
+        new Thread(() -> launchGame(demoPath, "demo-bootstrap", "demo"), "GemRB-demo-launch").start();
+    }
+
+    private void launchSelectedImportedGame() {
+        String gameId = getSharedPreferences("bootstrap", MODE_PRIVATE)
+                .getString("selectedGameId", null);
+        if (gameId == null) {
+            return;
+        }
+        File gamePath = managedGamePath(gameId);
+        if (gamePath == null) {
+            setStatus("Imported game storage is unavailable.");
+            return;
+        }
+        new Thread(() -> launchGame(gamePath, gameId, "auto"), "GemRB-game-launch").start();
+    }
+
+    private void launchGame(File gamePath, String saveId, String gameType) {
+        try {
+            File configFile = writeManagedConfig(runtimeDir, gamePath, saveId, gameType);
+            getSharedPreferences("bootstrap", MODE_PRIVATE)
+                    .edit()
                     .putString("configPath", configFile.getAbsolutePath())
                     .apply();
-
             runOnUiThread(() -> {
                 Intent intent = new Intent(BootstrapActivity.this, GemRBActivity.class);
                 startActivity(intent);
                 finish();
             });
         } catch (Exception error) {
-            Log.e(TAG, "Android runtime bootstrap failed", error);
-            runOnUiThread(() -> statusView.setText("GemRB bootstrap failed:\n" + error.getMessage()));
+            fail("Cannot launch GemRB", error);
+        }
+    }
+
+    private void setImporting(boolean importing) {
+        launchDemoButton.setEnabled(!importing);
+        launchImportedButton.setEnabled(!importing);
+        importButton.setEnabled(!importing);
+        cancelButton.setVisibility(importing ? View.VISIBLE : View.GONE);
+        if (importing) {
+            setStatus("Scanning selected game folder…");
         }
     }
 
@@ -61,11 +247,11 @@ public final class BootstrapActivity extends Activity {
             throw new IOException("Cannot create runtime directory");
         }
 
-        File runtimeDir = new File(runtimeRoot, RUNTIME_VERSION);
-        File completeMarker = new File(runtimeDir, ".complete");
+        File runtime = new File(runtimeRoot, RUNTIME_VERSION);
+        File completeMarker = new File(runtime, ".complete");
         if (completeMarker.isFile()) {
-            validateRuntime(runtimeDir);
-            return runtimeDir;
+            validateRuntime(runtime);
+            return runtime;
         }
 
         File stagingDir = new File(runtimeRoot, RUNTIME_VERSION + ".tmp");
@@ -78,42 +264,45 @@ public final class BootstrapActivity extends Activity {
         validateRuntime(stagingDir);
         writeFile(new File(stagingDir, ".complete"), RUNTIME_VERSION + "\n");
 
-        if (runtimeDir.exists()) {
-            deleteTree(runtimeDir);
+        if (runtime.exists()) {
+            deleteTree(runtime);
         }
-        Files.move(
-                stagingDir.toPath(),
-                runtimeDir.toPath(),
-                StandardCopyOption.ATOMIC_MOVE
-        );
-        return runtimeDir;
+        Files.move(stagingDir.toPath(), runtime.toPath(), StandardCopyOption.ATOMIC_MOVE);
+        return runtime;
     }
 
-    private void validateRuntime(File runtimeDir) throws IOException {
-        requireFile(runtimeDir, "gemrb/GUIScripts/GUICommon.py");
-        requireFile(runtimeDir, "python/lib/python3.14/os.py");
-        requireFile(runtimeDir, "demo/chitin.key");
+    private void validateRuntime(File runtime) throws IOException {
+        requireFile(runtime, "gemrb/GUIScripts/GUICommon.py");
+        requireFile(runtime, "python/lib/python3.14/os.py");
+        requireFile(runtime, "demo/chitin.key");
     }
 
-    private File writeManagedConfig(File runtimeDir) throws IOException {
+    private File writeManagedConfig(
+            File runtime,
+            File gamePath,
+            String saveId,
+            String gameType
+    ) throws IOException {
+        if (runtime == null || gamePath == null || !gamePath.isDirectory()) {
+            throw new IOException("Runtime or game path is unavailable");
+        }
         File configDir = new File(getFilesDir(), "config");
         File cacheDir = new File(getCacheDir(), "gemrb");
         File externalRoot = getExternalFilesDir(null);
         if (externalRoot == null) {
             throw new IOException("App-specific external storage is unavailable");
         }
-        File saveDir = new File(externalRoot, "saves/demo-bootstrap");
+        File saveDir = new File(externalRoot, "saves/" + saveId);
         if ((!configDir.isDirectory() && !configDir.mkdirs())
                 || (!cacheDir.isDirectory() && !cacheDir.mkdirs())
                 || (!saveDir.isDirectory() && !saveDir.mkdirs())) {
             throw new IOException("Cannot create Android GemRB data directories");
         }
 
-        File gemrbData = new File(runtimeDir, "gemrb");
-        File demoData = new File(runtimeDir, "demo");
+        File gemrbData = new File(runtime, "gemrb");
         String config =
-                "GameType=demo\n" +
-                "GamePath=" + demoData.getAbsolutePath() + "\n" +
+                "GameType=" + gameType + "\n" +
+                "GamePath=" + gamePath.getAbsolutePath() + "\n" +
                 "GemRBPath=" + gemrbData.getAbsolutePath() + "\n" +
                 "GUIScriptsPath=" + gemrbData.getAbsolutePath() + "\n" +
                 "GemRBOverridePath=" + gemrbData.getAbsolutePath() + "\n" +
@@ -139,6 +328,23 @@ public final class BootstrapActivity extends Activity {
                 StandardCopyOption.REPLACE_EXISTING
         );
         return target;
+    }
+
+    private File managedGamePath(String gameId) {
+        File externalRoot = getExternalFilesDir(null);
+        if (externalRoot == null) {
+            return null;
+        }
+        return new File(externalRoot, "games/" + gameId);
+    }
+
+    private void fail(String message, Exception error) {
+        Log.e(TAG, message, error);
+        runOnUiThread(() -> setStatus(message + ":\n" + error.getMessage()));
+    }
+
+    private void setStatus(String text) {
+        statusView.setText(text);
     }
 
     private static void copyAssetTree(AssetManager assets, String assetPath, File destination) throws IOException {
@@ -172,6 +378,19 @@ public final class BootstrapActivity extends Activity {
         if (!file.isFile() || file.length() == 0) {
             throw new IOException("Runtime file missing: " + relativePath);
         }
+    }
+
+    private static File findCaseInsensitive(File directory, String name) {
+        File[] children = directory.listFiles();
+        if (children == null) {
+            return null;
+        }
+        for (File child : children) {
+            if (child.isFile() && name.equalsIgnoreCase(child.getName())) {
+                return child;
+            }
+        }
+        return null;
     }
 
     private static void writeFile(File file, String value) throws IOException {
