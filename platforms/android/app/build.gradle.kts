@@ -43,6 +43,7 @@ android {
                     "-DGEMRB_ANDROID_ICONV_CHARSET_LIBRARY=${iconvPrefix.resolve("lib/libcharset.a").absolutePath}",
                     "-DGEMRB_ANDROID_FREETYPE_PREFIX=${freetypePrefix.absolutePath}",
                     "-DGEMRB_ANDROID_PNG_PREFIX=${pngPrefix.absolutePath}",
+                    "-DGEMRB_ANDROID_OGG_INCLUDE_DIR=${oggPrefix.resolve("include").absolutePath}",
                     "-DVORBIS_FILE=${vorbisPrefix.resolve("include/vorbis").absolutePath}",
                     "-DVORBIS_LIBRARY=${vorbisPrefix.resolve("lib/libvorbisfile.a").absolutePath};${vorbisPrefix.resolve("lib/libvorbis.a").absolutePath};${oggPrefix.resolve("lib/libogg.a").absolutePath};m",
                     "-DSDL_BACKEND=SDL2",
