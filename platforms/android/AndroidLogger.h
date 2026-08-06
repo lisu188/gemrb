@@ -11,6 +11,9 @@ namespace GemRB {
 
 class GEM_EXPORT AndroidLogger : public Logger::LogWriter {
 public:
+	AndroidLogger()
+		: Logger::LogWriter(DEBUG) {}
+
 	void WriteLogMessage(const Logger::LogMessage& msg) override;
 };
 
