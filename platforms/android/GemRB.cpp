@@ -10,6 +10,7 @@
 #include <SDL.h>
 #include <android/log.h>
 #include <clocale> //language encoding
+#include <cstdlib>
 
 // if/when android moves to SDL 1.3 remove these special functions.
 // SDL 1.3 fires window events for these conditions that are handled in SDLVideo.cpp.
@@ -36,14 +37,23 @@ int main(int argc, char* argv[])
 {
 	__android_log_print(ANDROID_LOG_INFO, "GemRB", "GEMRB_ANDROID_NATIVE_START");
 
-#ifdef GEMRB_ANDROID_BOOTSTRAP_ONLY
-	(void) argc;
-	(void) argv;
-	return GEM_OK;
-#else
+	const char* gemrbData = getenv("GEMRB_DATA");
+	const char* pythonHome = getenv("PYTHONHOME");
+	if (!gemrbData || !pythonHome) {
+		__android_log_print(ANDROID_LOG_ERROR, "GemRB", "Android runtime environment is incomplete");
+		return GEM_ERROR;
+	}
+	if (argc >= 3) {
+		__android_log_print(ANDROID_LOG_INFO, "GemRB", "GEMRB_ANDROID_CONFIG=%s", argv[2]);
+	}
+	__android_log_print(ANDROID_LOG_INFO, "GemRB", "GEMRB_ANDROID_RUNTIME=%s", gemrbData);
+	__android_log_print(ANDROID_LOG_INFO, "GemRB", "GEMRB_ANDROID_PYTHONHOME=%s", pythonHome);
+	__android_log_print(ANDROID_LOG_INFO, "GemRB", "GEMRB_ANDROID_CONFIGURED_START");
+
 	setlocale(LC_ALL, "");
-	setenv("SDL_VIDEO_X11_WMCLASS", argv[0], 0);
-	setenv("GEMRB_DATA", SDL_AndroidGetExternalStoragePath(), 1);
+	if (argc > 0 && argv[0]) {
+		setenv("SDL_VIDEO_X11_WMCLASS", argv[0], 0);
+	}
 
 // Prevent fragmentation of the heap by malloc (glibc).
 // The default threshold is 128*1024, which can result in a large memory usage
@@ -64,6 +74,7 @@ int main(int argc, char* argv[])
 
 	try {
 		Interface gemrb(LoadFromArgs(argc, argv));
+		__android_log_print(ANDROID_LOG_INFO, "GemRB", "GEMRB_ANDROID_ENGINE_INIT");
 #if SDL_COMPILEDVERSION < SDL_VERSIONNUM(1, 3, 0)
 		SDL_ANDROID_SetApplicationPutToBackgroundCallback(&appPutToBackground, &appPutToForeground);
 #endif
@@ -76,5 +87,4 @@ int main(int argc, char* argv[])
 	VideoDriver.reset();
 
 	return GEM_OK;
-#endif
 }
