@@ -98,7 +98,7 @@ android {
 
 val prepareAndroidDependencies by tasks.registering(Exec::class) {
     workingDir = rootProject.projectDir
-    commandLine("bash", "-c", "bash scripts/prepare-dependencies.sh && bash scripts/prepare-openal.sh")
+    commandLine("bash", "-c", "bash scripts/prefetch-mirrors.sh && bash scripts/prepare-dependencies.sh && bash scripts/prepare-openal.sh")
 }
 
 val stageAndroidRuntimeAssets by tasks.registering(Sync::class) {
