@@ -172,7 +172,7 @@ ELSE(APPLE)
     TARGET_LINK_LIBRARIES(gemrb ${CMAKE_DL_LIBS} Threads::Threads
       -Wl,--whole-archive gemrb_core ${plugins} -Wl,--no-whole-archive)
     IF(ANDROID)
-      TARGET_LINK_LIBRARIES(gemrb ${Iconv_LIBRARY} ${GEMRB_ANDROID_ICONV_CHARSET_LIBRARY} SDL2::SDL2 SDL2::SDL2main)
+      TARGET_LINK_LIBRARIES(gemrb ${Iconv_LIBRARY} ${GEMRB_ANDROID_ICONV_CHARSET_LIBRARY} SDL2::SDL2 SDL2::SDL2main log)
     ENDIF()
   else (STATIC_LINK)
     IF (MSVC)
