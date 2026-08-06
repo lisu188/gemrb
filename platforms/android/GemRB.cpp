@@ -37,6 +37,8 @@ int main(int argc, char* argv[])
 	__android_log_print(ANDROID_LOG_INFO, "GemRB", "GEMRB_ANDROID_NATIVE_START");
 
 #ifdef GEMRB_ANDROID_BOOTSTRAP_ONLY
+	(void) argc;
+	(void) argv;
 	return GEM_OK;
 #else
 	setlocale(LC_ALL, "");
