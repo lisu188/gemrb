@@ -24,7 +24,7 @@ android {
         minSdk = 28
         targetSdk = 36
         versionCode = 1
-        versionName = "0.9.5-android-m2"
+        versionName = "0.9.5-android-m3"
 
         ndk {
             abiFilters += listOf("arm64-v8a")
@@ -133,7 +133,7 @@ val stageAndroidRuntimeAssets by tasks.registering(Sync::class) {
     doLast {
         val marker = generatedAssetsDir.resolve("runtime/VERSION")
         marker.parentFile.mkdirs()
-        marker.writeText("m1-2\n")
+        marker.writeText("m3-1\n")
     }
 }
 
