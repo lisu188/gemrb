@@ -8,6 +8,9 @@ IF (VORBIS_LIBRARY)
 	# include the second parent of vorbisfile.h
 	get_filename_component(OGG_INCLUDE ${VORBIS_FILE} PATH)
 	include_directories(${OGG_INCLUDE})
+	IF(ANDROID AND GEMRB_ANDROID_OGG_INCLUDE_DIR)
+		include_directories(${GEMRB_ANDROID_OGG_INCLUDE_DIR})
+	ENDIF()
 
 	ADD_GEMRB_PLUGIN (OGGReader ${OGGReader_files})
 
