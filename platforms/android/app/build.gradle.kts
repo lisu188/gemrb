@@ -6,6 +6,10 @@ val repoRoot = rootProject.projectDir.resolve("../..").canonicalFile
 val depsDir = rootProject.projectDir.resolve(".deps").canonicalFile
 val pythonPrefix = depsDir.resolve("python/prefix")
 val iconvPrefix = depsDir.resolve("libiconv/prefix")
+val freetypePrefix = depsDir.resolve("freetype/prefix")
+val pngPrefix = depsDir.resolve("libpng/prefix")
+val oggPrefix = depsDir.resolve("libogg/prefix")
+val vorbisPrefix = depsDir.resolve("libvorbis/prefix")
 val sdl2Root = depsDir.resolve("sdl2")
 val androidBootstrap = rootProject.projectDir.resolve("cmake/AndroidBootstrap.cmake")
 val generatedAssetsDir = layout.buildDirectory.dir("generated/m1Assets").get().asFile
@@ -20,7 +24,7 @@ android {
         minSdk = 28
         targetSdk = 36
         versionCode = 1
-        versionName = "0.9.5-android-m1"
+        versionName = "0.9.5-android-m2"
 
         ndk {
             abiFilters += listOf("arm64-v8a")
@@ -37,14 +41,18 @@ android {
                     "-DIconv_INCLUDE_DIR=${iconvPrefix.resolve("include").absolutePath}",
                     "-DIconv_LIBRARY=${iconvPrefix.resolve("lib/libiconv.a").absolutePath}",
                     "-DGEMRB_ANDROID_ICONV_CHARSET_LIBRARY=${iconvPrefix.resolve("lib/libcharset.a").absolutePath}",
+                    "-DGEMRB_ANDROID_FREETYPE_PREFIX=${freetypePrefix.absolutePath}",
+                    "-DGEMRB_ANDROID_PNG_PREFIX=${pngPrefix.absolutePath}",
+                    "-DVORBIS_FILE=${vorbisPrefix.resolve("include/vorbis").absolutePath}",
+                    "-DVORBIS_LIBRARY=${vorbisPrefix.resolve("lib/libvorbisfile.a").absolutePath};${vorbisPrefix.resolve("lib/libvorbis.a").absolutePath};${oggPrefix.resolve("lib/libogg.a").absolutePath};m",
                     "-DSDL_BACKEND=SDL2",
                     "-DSTATIC_LINK=ON",
                     "-DUSE_SDLMIXER=OFF",
                     "-DUSE_OPENAL=OFF",
                     "-DUSE_LIBVLC=OFF",
-                    "-DUSE_FREETYPE=OFF",
-                    "-DUSE_PNG=OFF",
-                    "-DUSE_VORBIS=OFF",
+                    "-DUSE_FREETYPE=ON",
+                    "-DUSE_PNG=ON",
+                    "-DUSE_VORBIS=ON",
                     "-DOPENGL_BACKEND=None",
                     "-DSKIP_DEMO_DATA=ON",
                     "-DUSE_TESTS=OFF"
