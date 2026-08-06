@@ -43,6 +43,16 @@ for required in libmain.so libSDL2.so libpython3.14.so; do
     fi
 done
 
+for required_asset in \
+    assets/runtime/VERSION \
+    assets/runtime/gemrb/GUIScripts/GUICommon.py \
+    assets/runtime/python/lib/python3.14/os.py; do
+    if ! unzip -Z1 "${APK}" | grep -Fxq "${required_asset}"; then
+        echo "Required runtime asset missing from APK: ${required_asset}" >&2
+        exit 1
+    fi
+done
+
 status=0
 while IFS= read -r -d '' library; do
     echo "Checking 16 KB ELF alignment: $(basename "${library}")"
