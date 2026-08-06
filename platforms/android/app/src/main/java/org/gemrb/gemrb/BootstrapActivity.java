@@ -18,7 +18,7 @@ import java.nio.file.StandardCopyOption;
 
 public final class BootstrapActivity extends Activity {
     private static final String TAG = "GemRB";
-    private static final String RUNTIME_VERSION = "m1-1";
+    private static final String RUNTIME_VERSION = "m1-2";
     private TextView statusView;
 
     @Override
@@ -92,6 +92,7 @@ public final class BootstrapActivity extends Activity {
     private void validateRuntime(File runtimeDir) throws IOException {
         requireFile(runtimeDir, "gemrb/GUIScripts/GUICommon.py");
         requireFile(runtimeDir, "python/lib/python3.14/os.py");
+        requireFile(runtimeDir, "demo/chitin.key");
     }
 
     private File writeManagedConfig(File runtimeDir) throws IOException {
@@ -101,7 +102,7 @@ public final class BootstrapActivity extends Activity {
         if (externalRoot == null) {
             throw new IOException("App-specific external storage is unavailable");
         }
-        File saveDir = new File(externalRoot, "saves/bootstrap");
+        File saveDir = new File(externalRoot, "saves/demo-bootstrap");
         if ((!configDir.isDirectory() && !configDir.mkdirs())
                 || (!cacheDir.isDirectory() && !cacheDir.mkdirs())
                 || (!saveDir.isDirectory() && !saveDir.mkdirs())) {
@@ -109,9 +110,10 @@ public final class BootstrapActivity extends Activity {
         }
 
         File gemrbData = new File(runtimeDir, "gemrb");
+        File demoData = new File(runtimeDir, "demo");
         String config =
-                "GameType=test\n" +
-                "GamePath=" + gemrbData.getAbsolutePath() + "\n" +
+                "GameType=demo\n" +
+                "GamePath=" + demoData.getAbsolutePath() + "\n" +
                 "GemRBPath=" + gemrbData.getAbsolutePath() + "\n" +
                 "GUIScriptsPath=" + gemrbData.getAbsolutePath() + "\n" +
                 "GemRBOverridePath=" + gemrbData.getAbsolutePath() + "\n" +
@@ -123,7 +125,9 @@ public final class BootstrapActivity extends Activity {
                 "SkipIntroVideos=1\n" +
                 "TouchInput=1\n" +
                 "MouseFeedback=3\n" +
-                "CaseSensitive=1\n";
+                "CaseSensitive=1\n" +
+                "Width=640\n" +
+                "Height=480\n";
 
         File target = new File(configDir, "GemRB.cfg");
         File staging = new File(configDir, "GemRB.cfg.tmp");
