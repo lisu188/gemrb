@@ -1,0 +1,70 @@
+name: Android
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/android.yml'
+      - 'CMakeLists.txt'
+      - 'cmake/**'
+      - 'gemrb/**'
+      - 'platforms/android/**'
+  push:
+    branches:
+      - android-modernization
+    paths:
+      - '.github/workflows/android.yml'
+      - 'CMakeLists.txt'
+      - 'cmake/**'
+      - 'gemrb/**'
+      - 'platforms/android/**'
+
+permissions:
+  contents: read
+
+jobs:
+  arm64-debug:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK components
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager \
+            'platforms;android-37' \
+            'build-tools;36.0.0' \
+            'ndk;29.0.14206865' \
+            'cmake;3.31.6'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.6.0'
+
+      - name: Prepare native dependencies
+        working-directory: platforms/android
+        run: bash scripts/prepare-dependencies.sh
+
+      - name: Assemble debug APK
+        working-directory: platforms/android
+        run: gradle :app:assembleDebug --stacktrace
+
+      - name: Validate packaged native libraries
+        working-directory: platforms/android
+        run: bash scripts/validate-native-libs.sh app/build/outputs/apk/debug/app-debug.apk
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gemrb-android-arm64-debug
+          path: platforms/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: ignore
