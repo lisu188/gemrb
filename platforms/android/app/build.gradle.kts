@@ -10,6 +10,7 @@ val freetypePrefix = depsDir.resolve("freetype/prefix")
 val pngPrefix = depsDir.resolve("libpng/prefix")
 val oggPrefix = depsDir.resolve("libogg/prefix")
 val vorbisPrefix = depsDir.resolve("libvorbis/prefix")
+val openalPrefix = depsDir.resolve("openal/prefix")
 val sdl2Root = depsDir.resolve("sdl2")
 val androidBootstrap = rootProject.projectDir.resolve("cmake/AndroidBootstrap.cmake")
 val generatedAssetsDir = layout.buildDirectory.dir("generated/m1Assets").get().asFile
@@ -24,7 +25,7 @@ android {
         minSdk = 28
         targetSdk = 36
         versionCode = 1
-        versionName = "0.9.5-android-m3"
+        versionName = "0.9.5-android-m4"
 
         ndk {
             abiFilters += listOf("arm64-v8a")
@@ -46,10 +47,11 @@ android {
                     "-DGEMRB_ANDROID_OGG_INCLUDE_DIR=${oggPrefix.resolve("include").absolutePath}",
                     "-DVORBIS_FILE=${vorbisPrefix.resolve("include/vorbis").absolutePath}",
                     "-DVORBIS_LIBRARY=${vorbisPrefix.resolve("lib/libvorbisfile.a").absolutePath};${vorbisPrefix.resolve("lib/libvorbis.a").absolutePath};${oggPrefix.resolve("lib/libogg.a").absolutePath};m",
+                    "-DGEMRB_ANDROID_OPENAL_PREFIX=${openalPrefix.absolutePath}",
                     "-DSDL_BACKEND=SDL2",
                     "-DSTATIC_LINK=ON",
                     "-DUSE_SDLMIXER=OFF",
-                    "-DUSE_OPENAL=OFF",
+                    "-DUSE_OPENAL=ON",
                     "-DUSE_LIBVLC=OFF",
                     "-DUSE_FREETYPE=ON",
                     "-DUSE_PNG=ON",
@@ -96,7 +98,7 @@ android {
 
 val prepareAndroidDependencies by tasks.registering(Exec::class) {
     workingDir = rootProject.projectDir
-    commandLine("bash", "scripts/prepare-dependencies.sh")
+    commandLine("bash", "-c", "scripts/prepare-dependencies.sh && scripts/prepare-openal.sh")
 }
 
 val stageAndroidRuntimeAssets by tasks.registering(Sync::class) {
