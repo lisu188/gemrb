@@ -104,6 +104,9 @@ val stageAndroidRuntimeAssets by tasks.registering(Sync::class) {
     from(repoRoot.resolve("gemrb/unhardcoded")) {
         into("runtime/gemrb/unhardcoded")
     }
+    from(repoRoot.resolve("demo")) {
+        into("runtime/demo")
+    }
     from(pythonPrefix.resolve("lib/python3.14")) {
         into("runtime/python/lib/python3.14")
         exclude(
@@ -121,7 +124,7 @@ val stageAndroidRuntimeAssets by tasks.registering(Sync::class) {
     doLast {
         val marker = generatedAssetsDir.resolve("runtime/VERSION")
         marker.parentFile.mkdirs()
-        marker.writeText("m1-1\n")
+        marker.writeText("m1-2\n")
     }
 }
 
