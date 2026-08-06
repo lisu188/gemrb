@@ -8,7 +8,7 @@ val pythonPrefix = depsDir.resolve("python/prefix")
 val iconvPrefix = depsDir.resolve("libiconv/prefix")
 val sdl2Root = depsDir.resolve("sdl2")
 val androidBootstrap = rootProject.projectDir.resolve("cmake/AndroidBootstrap.cmake")
-val generatedAssetsDir = layout.buildDirectory.dir("generated/m1Assets")
+val generatedAssetsDir = layout.buildDirectory.dir("generated/m1Assets").get().asFile
 
 android {
     namespace = "org.gemrb.gemrb"
@@ -120,7 +120,7 @@ val stageAndroidRuntimeAssets by tasks.registering(Sync::class) {
     }
 
     doLast {
-        val marker = generatedAssetsDir.get().file("runtime/VERSION").asFile
+        val marker = generatedAssetsDir.resolve("runtime/VERSION")
         marker.parentFile.mkdirs()
         marker.writeText("m1-1\n")
     }
