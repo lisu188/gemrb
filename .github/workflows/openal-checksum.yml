@@ -1,6 +1,9 @@
 name: OpenAL checksum probe
 
 on:
+  pull_request:
+    paths:
+      - '.github/workflows/openal-checksum.yml'
   push:
     branches:
       - android-modernization
