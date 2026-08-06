@@ -44,15 +44,34 @@ resolve_ndk() {
 }
 
 archive="${DOWNLOAD_DIR}/${OPENAL_ARCHIVE}"
-if [[ ! -f "${archive}" ]]; then
-    curl --fail --location --retry 5 --retry-all-errors --output "${archive}" "${OPENAL_URL}"
+temporary="${archive}.tmp"
+if [[ -f "${archive}" && "$(sha256_file "${archive}")" != "${OPENAL_SHA256}" ]]; then
+    echo "Discarding corrupt cached download: ${archive}" >&2
+    rm -f "${archive}"
 fi
-actual="$(sha256_file "${archive}")"
-if [[ "${actual}" != "${OPENAL_SHA256}" ]]; then
-    echo "SHA-256 mismatch for ${archive}" >&2
-    echo "expected: ${OPENAL_SHA256}" >&2
-    echo "actual:   ${actual}" >&2
-    exit 1
+if [[ ! -f "${archive}" ]]; then
+    rm -f "${temporary}"
+    if ! curl \
+        --fail \
+        --location \
+        --retry 8 \
+        --retry-all-errors \
+        --retry-delay 2 \
+        --connect-timeout 20 \
+        --output "${temporary}" \
+        "${OPENAL_URL}"; then
+        rm -f "${temporary}"
+        exit 1
+    fi
+    actual="$(sha256_file "${temporary}")"
+    if [[ "${actual}" != "${OPENAL_SHA256}" ]]; then
+        echo "SHA-256 mismatch for ${OPENAL_URL}" >&2
+        echo "expected: ${OPENAL_SHA256}" >&2
+        echo "actual:   ${actual}" >&2
+        rm -f "${temporary}"
+        exit 1
+    fi
+    mv "${temporary}" "${archive}"
 fi
 
 if [[ -f "${DEPS_DIR}/openal/.gemrb-ready-${OPENAL_VERSION}" ]]; then
