@@ -8,6 +8,7 @@
 #include "Interface.h"
 
 #include <SDL.h>
+#include <android/log.h>
 #include <clocale> //language encoding
 
 // if/when android moves to SDL 1.3 remove these special functions.
@@ -33,6 +34,11 @@ using namespace GemRB;
 
 int main(int argc, char* argv[])
 {
+	__android_log_print(ANDROID_LOG_INFO, "GemRB", "GEMRB_ANDROID_NATIVE_START");
+
+#ifdef GEMRB_ANDROID_BOOTSTRAP_ONLY
+	return GEM_OK;
+#else
 	setlocale(LC_ALL, "");
 	setenv("SDL_VIDEO_X11_WMCLASS", argv[0], 0);
 	setenv("GEMRB_DATA", SDL_AndroidGetExternalStoragePath(), 1);
@@ -68,4 +74,5 @@ int main(int argc, char* argv[])
 	VideoDriver.reset();
 
 	return GEM_OK;
+#endif
 }
