@@ -64,7 +64,11 @@ jobs:
 
       - name: Prepare native dependencies
         working-directory: platforms/android
-        run: bash scripts/prepare-dependencies.sh
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/prepare-dependencies.sh
+          bash scripts/prepare-openal.sh
 
       - name: Assemble debug APK
         working-directory: platforms/android
