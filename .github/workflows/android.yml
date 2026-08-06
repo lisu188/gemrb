@@ -34,6 +34,18 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Test Android path isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/gemrb-android-java-test
+          mkdir -p /tmp/gemrb-android-java-test
+          javac -d /tmp/gemrb-android-java-test \
+            platforms/android/app/src/main/java/org/gemrb/gemrb/GamePaths.java \
+            platforms/android/app/src/main/java/org/gemrb/gemrb/ManagedConfig.java \
+            platforms/android/tests/org/gemrb/gemrb/GamePathsTest.java
+          java -cp /tmp/gemrb-android-java-test org.gemrb.gemrb.GamePathsTest
+
       - uses: android-actions/setup-android@v3
 
       - name: Install Android SDK components
