@@ -105,3 +105,42 @@ jobs:
           name: gemrb-android-${{ matrix.abi }}-debug
           path: platforms/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: ignore
+
+  x86_64-emulator-smoke:
+    name: x86_64 emulator smoke
+    needs: android-debug
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: gemrb-android-x86_64-debug
+          path: android-artifact
+
+      - name: Enable KVM group permissions
+        shell: bash
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Launch bundled demo on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          arch: x86_64
+          target: default
+          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -no-boot-anim -camera-back none
+          disable-animations: true
+          script: GEMRB_ANDROID_SMOKE_LOG="$GITHUB_WORKSPACE/gemrb-emulator.log" bash platforms/android/scripts/smoke-emulator.sh android-artifact/app-debug.apk
+
+      - name: Upload emulator log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gemrb-android-x86_64-emulator-log
+          path: gemrb-emulator.log
+          if-no-files-found: warn
