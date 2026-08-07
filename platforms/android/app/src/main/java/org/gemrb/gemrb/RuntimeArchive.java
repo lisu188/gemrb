@@ -1,6 +1,7 @@
 package org.gemrb.gemrb;
 
 import android.content.res.AssetManager;
+import android.util.Log;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
@@ -12,7 +13,9 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 final class RuntimeArchive {
+    private static final String TAG = "GemRB";
     private static final int BUFFER_SIZE = 128 * 1024;
+    private static final int PROGRESS_INTERVAL = 256;
 
     private RuntimeArchive() {
     }
@@ -20,6 +23,9 @@ final class RuntimeArchive {
     static void extract(AssetManager assets, String assetName, File destination) throws IOException {
         String destinationPath = destination.getCanonicalPath() + File.separator;
         byte[] buffer = new byte[BUFFER_SIZE];
+        int filesExtracted = 0;
+        long startedAt = System.nanoTime();
+        Log.i(TAG, "GEMRB_ANDROID_RUNTIME_EXTRACT_START");
 
         try (InputStream assetInput = assets.open(assetName);
              ZipInputStream input = new ZipInputStream(new BufferedInputStream(assetInput, BUFFER_SIZE))) {
@@ -59,7 +65,17 @@ final class RuntimeArchive {
                     }
                 }
                 input.closeEntry();
+                filesExtracted++;
+                if (filesExtracted % PROGRESS_INTERVAL == 0) {
+                    Log.i(TAG, "GEMRB_ANDROID_RUNTIME_EXTRACT_PROGRESS files=" + filesExtracted);
+                }
             }
         }
+
+        long elapsedMs = (System.nanoTime() - startedAt) / 1_000_000L;
+        Log.i(
+                TAG,
+                "GEMRB_ANDROID_RUNTIME_EXTRACT_DONE files=" + filesExtracted + " elapsedMs=" + elapsedMs
+        );
     }
 }
