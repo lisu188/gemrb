@@ -25,12 +25,14 @@ final class GameImporter {
         final String gameId;
         final String displayName;
         final File gamePath;
+        final File savePath;
         final long totalBytes;
 
-        Result(String gameId, String displayName, File gamePath, long totalBytes) {
+        Result(String gameId, String displayName, File gamePath, File savePath, long totalBytes) {
             this.gameId = gameId;
             this.displayName = displayName;
             this.gamePath = gamePath;
+            this.savePath = savePath;
             this.totalBytes = totalBytes;
         }
     }
@@ -70,11 +72,13 @@ final class GameImporter {
             throw new IOException("App-specific external storage is unavailable");
         }
         File gamesRoot = new File(externalRoot, "games");
-        if (!gamesRoot.isDirectory() && !gamesRoot.mkdirs()) {
-            throw new IOException("Cannot create managed games directory");
+        File savesRoot = new File(externalRoot, "saves");
+        if ((!gamesRoot.isDirectory() && !gamesRoot.mkdirs())
+                || (!savesRoot.isDirectory() && !savesRoot.mkdirs())) {
+            throw new IOException("Cannot create managed game/save directories");
         }
 
-        long freeBytes = gamesRoot.getUsableSpace();
+        long freeBytes = externalRoot.getUsableSpace();
         long safetyMargin = 64L * 1024L * 1024L;
         if (scan.totalBytes > 0 && freeBytes < scan.totalBytes + safetyMargin) {
             throw new IOException(
@@ -84,13 +88,21 @@ final class GameImporter {
 
         String gameId = UUID.randomUUID().toString();
         File staging = new File(gamesRoot, gameId + ".tmp");
-        File target = new File(gamesRoot, gameId);
+        File target = GamePaths.gamePath(externalRoot, gameId);
+        File saveStaging = GamePaths.saveStagingPath(externalRoot, gameId);
+        File saveTarget = GamePaths.savePath(externalRoot, gameId);
+        if (target.exists() || saveTarget.exists()) {
+            throw new IOException("Generated managed game id already exists");
+        }
         deleteTree(staging);
-        if (!staging.mkdirs()) {
-            throw new IOException("Cannot create game import staging directory");
+        deleteTree(saveStaging);
+        if (!staging.mkdirs() || !saveStaging.mkdirs()) {
+            throw new IOException("Cannot create game import staging directories");
         }
 
         CopyState copyState = new CopyState();
+        boolean gamePromoted = false;
+        boolean savesPromoted = false;
         try {
             copyTree(
                     resolver,
@@ -106,16 +118,75 @@ final class GameImporter {
             if (copiedKey == null || copiedKey.length() == 0) {
                 throw new IOException("Imported game failed chitin.key validation");
             }
+
+            migrateImportedSaveDirectories(staging, saveStaging);
+            checkCancelled(cancelled);
+
             Files.move(staging.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE);
+            gamePromoted = true;
+            checkCancelled(cancelled);
+
+            Files.move(saveStaging.toPath(), saveTarget.toPath(), StandardCopyOption.ATOMIC_MOVE);
+            savesPromoted = true;
+            checkCancelled(cancelled);
         } catch (Exception error) {
             deleteTree(staging);
+            deleteTree(saveStaging);
+            if (savesPromoted) {
+                deleteTree(saveTarget);
+            }
+            if (gamePromoted) {
+                deleteTree(target);
+            }
             if (error instanceof IOException) {
                 throw (IOException) error;
             }
             throw new IOException("Game import failed", error);
         }
 
-        return new Result(gameId, displayName, target, scan.totalBytes);
+        return new Result(gameId, displayName, target, saveTarget, scan.totalBytes);
+    }
+
+    static void discardImportedResult(Result result) throws IOException {
+        IOException failure = null;
+        try {
+            deleteTree(result.gamePath);
+        } catch (IOException error) {
+            failure = error;
+        }
+        try {
+            deleteTree(result.savePath);
+        } catch (IOException error) {
+            if (failure == null) {
+                failure = error;
+            } else {
+                failure.addSuppressed(error);
+            }
+        }
+        if (failure != null) {
+            throw failure;
+        }
+    }
+
+    private static void migrateImportedSaveDirectories(File gameStaging, File saveStaging) throws IOException {
+        File[] children = gameStaging.listFiles();
+        if (children == null) {
+            throw new IOException("Cannot inspect imported game staging directory");
+        }
+        for (File child : children) {
+            if (!child.isDirectory()) {
+                continue;
+            }
+            String destinationName = GamePaths.importedSaveDirectoryName(child.getName());
+            if (destinationName == null) {
+                continue;
+            }
+            File destination = new File(saveStaging, destinationName);
+            if (destination.exists()) {
+                throw new IOException("Duplicate imported save directory: " + destinationName);
+            }
+            Files.move(child.toPath(), destination.toPath(), StandardCopyOption.ATOMIC_MOVE);
+        }
     }
 
     private static void scanTree(
