@@ -27,20 +27,39 @@ public final class BootstrapActivity extends Activity {
     private static final String TAG = "GemRB";
     private static final String RUNTIME_VERSION = "m3-1";
     private static final int REQUEST_IMPORT_GAME = 1001;
+    private static final Object RUNTIME_INSTALL_LOCK = new Object();
+
+    private final AtomicBoolean destroyed = new AtomicBoolean(false);
 
     private TextView statusView;
     private Button launchDemoButton;
     private LinearLayout importedGamesLayout;
     private Button importButton;
     private Button cancelButton;
-    private File runtimeDir;
-    private AtomicBoolean importCancelled;
+    private volatile File runtimeDir;
+    private volatile AtomicBoolean importCancelled;
+    private volatile Thread importThread;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         createUi();
-        new Thread(this::prepareRuntime, "GemRB-bootstrap").start();
+        Thread bootstrapThread = new Thread(this::prepareRuntime, "GemRB-bootstrap");
+        bootstrapThread.start();
+    }
+
+    @Override
+    protected void onDestroy() {
+        destroyed.set(true);
+        AtomicBoolean cancellation = importCancelled;
+        if (cancellation != null) {
+            cancellation.set(true);
+        }
+        Thread worker = importThread;
+        if (worker != null) {
+            worker.interrupt();
+        }
+        super.onDestroy();
     }
 
     @Override
@@ -65,8 +84,11 @@ public final class BootstrapActivity extends Activity {
         }
 
         setImporting(true);
-        importCancelled = new AtomicBoolean(false);
-        new Thread(() -> importGame(treeUri), "GemRB-game-import").start();
+        AtomicBoolean cancellation = new AtomicBoolean(false);
+        importCancelled = cancellation;
+        Thread worker = new Thread(() -> importGame(treeUri, cancellation), "GemRB-game-import");
+        importThread = worker;
+        worker.start();
     }
 
     private void createUi() {
@@ -107,8 +129,9 @@ public final class BootstrapActivity extends Activity {
         cancelButton.setText("Cancel import");
         cancelButton.setVisibility(View.GONE);
         cancelButton.setOnClickListener(view -> {
-            if (importCancelled != null) {
-                importCancelled.set(true);
+            AtomicBoolean cancellation = importCancelled;
+            if (cancellation != null) {
+                cancellation.set(true);
                 setStatus("Cancelling import…");
             }
         });
@@ -119,12 +142,19 @@ public final class BootstrapActivity extends Activity {
 
     private void prepareRuntime() {
         try {
-            runtimeDir = ensureRuntime();
+            File preparedRuntime;
+            synchronized (RUNTIME_INSTALL_LOCK) {
+                preparedRuntime = ensureRuntimeLocked();
+            }
+            if (!isActivityUsable()) {
+                return;
+            }
+            runtimeDir = preparedRuntime;
             getSharedPreferences("bootstrap", MODE_PRIVATE)
                     .edit()
-                    .putString("activeRuntime", runtimeDir.getAbsolutePath())
+                    .putString("activeRuntime", preparedRuntime.getAbsolutePath())
                     .apply();
-            runOnUiThread(this::showReadyUi);
+            postIfActive(this::showReadyUi);
         } catch (Exception error) {
             fail("Android runtime bootstrap failed", error);
         }
@@ -159,13 +189,17 @@ public final class BootstrapActivity extends Activity {
         startActivityForResult(intent, REQUEST_IMPORT_GAME);
     }
 
-    private void importGame(Uri treeUri) {
+    private void importGame(Uri treeUri, AtomicBoolean cancellation) {
+        GameImporter.Result result = null;
         try {
-            GameImporter.Result result = GameImporter.importTree(
+            result = GameImporter.importTree(
                     this,
                     treeUri,
-                    importCancelled,
-                    (copied, total, currentName) -> runOnUiThread(() -> {
+                    cancellation,
+                    (copied, total, currentName) -> postIfActive(() -> {
+                        if (cancellation.get()) {
+                            return;
+                        }
                         String progress;
                         if (total > 0) {
                             int percent = (int) Math.min(100, (copied * 100L) / total);
@@ -177,23 +211,51 @@ public final class BootstrapActivity extends Activity {
                     })
             );
 
+            if (!isImportUsable(cancellation)) {
+                GameImporter.discardImportedResult(result);
+                return;
+            }
+
             GameRegistry.add(this, result.gameId, result.displayName);
-            launchGame(result.gamePath, result.gameId, "auto");
+            launchGame(result.gamePath, result.gameId, "auto", cancellation);
         } catch (Exception error) {
-            fail("Game import failed", error);
-            runOnUiThread(() -> {
-                setImporting(false);
-                refreshImportedGames();
-            });
+            if (cancellation.get() || !isActivityUsable()) {
+                if (result != null) {
+                    try {
+                        GameImporter.discardImportedResult(result);
+                    } catch (IOException cleanupError) {
+                        Log.w(TAG, "Failed to clean cancelled imported game", cleanupError);
+                    }
+                }
+                postIfActive(() -> {
+                    setStatus("Game import cancelled.");
+                    setImporting(false);
+                    refreshImportedGames();
+                });
+            } else {
+                fail("Game import failed", error);
+                postIfActive(() -> {
+                    setImporting(false);
+                    refreshImportedGames();
+                });
+            }
+        } finally {
+            if (importThread == Thread.currentThread()) {
+                importThread = null;
+            }
         }
     }
 
     private void launchDemo() {
-        if (runtimeDir == null) {
+        File currentRuntime = runtimeDir;
+        if (currentRuntime == null || !isActivityUsable()) {
             return;
         }
-        File demoPath = new File(runtimeDir, "demo");
-        new Thread(() -> launchGame(demoPath, "demo-bootstrap", "demo"), "GemRB-demo-launch").start();
+        File demoPath = new File(currentRuntime, "demo");
+        new Thread(
+                () -> launchGame(demoPath, "demo-bootstrap", "demo", null),
+                "GemRB-demo-launch"
+        ).start();
     }
 
     private void launchImportedGame(GameRegistry.Entry entry) {
@@ -205,25 +267,41 @@ public final class BootstrapActivity extends Activity {
         }
         GameRegistry.select(this, entry.gameId, entry.displayName);
         new Thread(
-                () -> launchGame(gamePath, entry.gameId, "auto"),
+                () -> launchGame(gamePath, entry.gameId, "auto", null),
                 "GemRB-game-launch"
         ).start();
     }
 
-    private void launchGame(File gamePath, String saveId, String gameType) {
+    private void launchGame(
+            File gamePath,
+            String saveId,
+            String gameType,
+            AtomicBoolean cancellation
+    ) {
+        if (!isOperationUsable(cancellation)) {
+            return;
+        }
         try {
-            File configFile = writeManagedConfig(runtimeDir, gamePath, saveId, gameType);
+            File configFile = writeManagedConfig(runtimeDir, gamePath, saveId, gameType, cancellation);
+            if (!isOperationUsable(cancellation)) {
+                return;
+            }
             getSharedPreferences("bootstrap", MODE_PRIVATE)
                     .edit()
                     .putString("configPath", configFile.getAbsolutePath())
                     .apply();
-            runOnUiThread(() -> {
+            postIfActive(() -> {
+                if (!isOperationUsable(cancellation)) {
+                    return;
+                }
                 Intent intent = new Intent(BootstrapActivity.this, GemRBActivity.class);
                 startActivity(intent);
                 finish();
             });
         } catch (Exception error) {
-            fail("Cannot launch GemRB", error);
+            if (isOperationUsable(cancellation)) {
+                fail("Cannot launch GemRB", error);
+            }
         }
     }
 
@@ -243,7 +321,7 @@ public final class BootstrapActivity extends Activity {
         }
     }
 
-    private File ensureRuntime() throws IOException {
+    private File ensureRuntimeLocked() throws IOException {
         File runtimeRoot = new File(getFilesDir(), "runtime");
         if (!runtimeRoot.isDirectory() && !runtimeRoot.mkdirs()) {
             throw new IOException("Cannot create runtime directory");
@@ -283,7 +361,8 @@ public final class BootstrapActivity extends Activity {
             File runtime,
             File gamePath,
             String saveId,
-            String gameType
+            String gameType,
+            AtomicBoolean cancellation
     ) throws IOException {
         if (runtime == null || gamePath == null || !gamePath.isDirectory()) {
             throw new IOException("Runtime or game path is unavailable");
@@ -312,6 +391,10 @@ public final class BootstrapActivity extends Activity {
         File target = new File(configDir, "GemRB.cfg");
         File staging = new File(configDir, "GemRB.cfg.tmp");
         writeFile(staging, config);
+        if (!isOperationUsable(cancellation)) {
+            Files.deleteIfExists(staging.toPath());
+            throw new IOException("Launch cancelled before config promotion");
+        }
         Files.move(
                 staging.toPath(),
                 target.toPath(),
@@ -334,9 +417,32 @@ public final class BootstrapActivity extends Activity {
         }
     }
 
+    private boolean isImportUsable(AtomicBoolean cancellation) {
+        return cancellation != null && !cancellation.get() && isActivityUsable();
+    }
+
+    private boolean isOperationUsable(AtomicBoolean cancellation) {
+        return isActivityUsable() && (cancellation == null || !cancellation.get());
+    }
+
+    private boolean isActivityUsable() {
+        return !destroyed.get() && !isFinishing() && !isDestroyed();
+    }
+
+    private void postIfActive(Runnable action) {
+        if (!isActivityUsable()) {
+            return;
+        }
+        runOnUiThread(() -> {
+            if (isActivityUsable()) {
+                action.run();
+            }
+        });
+    }
+
     private void fail(String message, Exception error) {
         Log.e(TAG, message, error);
-        runOnUiThread(() -> setStatus(message + ":\n" + error.getMessage()));
+        postIfActive(() -> setStatus(message + ":\n" + error.getMessage()));
     }
 
     private void setStatus(String text) {
