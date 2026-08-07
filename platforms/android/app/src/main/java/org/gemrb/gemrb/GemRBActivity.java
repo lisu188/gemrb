@@ -1,14 +1,18 @@
 package org.gemrb.gemrb;
 
+import android.content.res.Configuration;
 import android.os.Bundle;
 import android.system.ErrnoException;
 import android.system.Os;
+import android.util.Log;
 
 import org.libsdl.app.SDLActivity;
 
 import java.io.File;
 
 public final class GemRBActivity extends SDLActivity {
+    private static final String LOG_TAG = "GemRB";
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         String runtimePath = getSharedPreferences("bootstrap", MODE_PRIVATE)
@@ -32,6 +36,38 @@ public final class GemRBActivity extends SDLActivity {
         }
 
         super.onCreate(savedInstanceState);
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        Log.i(LOG_TAG, "GEMRB_ANDROID_ACTIVITY_PAUSED");
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        Log.i(LOG_TAG, "GEMRB_ANDROID_ACTIVITY_RESUMED");
+    }
+
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        Log.i(LOG_TAG, "GEMRB_ANDROID_CONFIGURATION_CHANGED");
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        Log.i(LOG_TAG, hasFocus
+                ? "GEMRB_ANDROID_WINDOW_FOCUS_GAINED"
+                : "GEMRB_ANDROID_WINDOW_FOCUS_LOST");
+    }
+
+    @Override
+    protected void onDestroy() {
+        Log.i(LOG_TAG, "GEMRB_ANDROID_ACTIVITY_DESTROYED");
+        super.onDestroy();
     }
 
     @Override
