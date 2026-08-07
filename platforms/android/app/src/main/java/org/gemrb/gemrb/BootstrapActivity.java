@@ -340,7 +340,7 @@ public final class BootstrapActivity extends Activity {
             throw new IOException("Cannot create runtime staging directory");
         }
 
-        copyAssetTree(getAssets(), "runtime", stagingDir);
+        RuntimeArchive.extract(getAssets(), "runtime.zip", stagingDir);
         validateRuntime(stagingDir);
         writeFile(new File(stagingDir, ".complete"), RUNTIME_VERSION + "\n");
 
