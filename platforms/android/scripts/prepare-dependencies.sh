@@ -13,9 +13,6 @@ SDL_URL="https://www.libsdl.org/release/${SDL_ARCHIVE}"
 SDL_SHA256="5f5993c530f084535c65a6879e9b26ad441169b3e25d789d83287040a9ca5165"
 
 PYTHON_VERSION="3.14.7"
-PYTHON_ARCHIVE="python-${PYTHON_VERSION}-aarch64-linux-android.tar.gz"
-PYTHON_URL="https://www.python.org/ftp/python/${PYTHON_VERSION}/${PYTHON_ARCHIVE}"
-PYTHON_SHA256="6d50cc3aa66e414a439594089bcdfb5f1264358155c70c1f00471c24cfb477fb"
 
 ICONV_VERSION="1.19"
 ICONV_ARCHIVE="libiconv-${ICONV_VERSION}.tar.gz"
@@ -44,9 +41,31 @@ VORBIS_SHA256="0e982409a9c3fc82ee06e08205b1355e5c6aa4c36bca58146ef399621b0ce5ab"
 
 ANDROID_API="28"
 NDK_VERSION="29.0.14206865"
-TARGET_TRIPLE="aarch64-linux-android"
+ANDROID_ABI="${GEMRB_ANDROID_ABI:-arm64-v8a}"
 
-mkdir -p "${DOWNLOAD_DIR}" "${BUILD_DIR}" "${DEPS_DIR}/jniLibs/arm64-v8a"
+case "${ANDROID_ABI}" in
+    arm64-v8a)
+        TARGET_TRIPLE="aarch64-linux-android"
+        PYTHON_ARCHIVE="python-${PYTHON_VERSION}-aarch64-linux-android.tar.gz"
+        PYTHON_SHA256="6d50cc3aa66e414a439594089bcdfb5f1264358155c70c1f00471c24cfb477fb"
+        ;;
+    x86_64)
+        TARGET_TRIPLE="x86_64-linux-android"
+        PYTHON_ARCHIVE="python-${PYTHON_VERSION}-x86_64-linux-android.tar.gz"
+        PYTHON_SHA256="2c16ce2359565cd8c24f86cfb75630768ba6607e732946b294b969797f583b60"
+        ;;
+    *)
+        echo "Unsupported Android ABI: ${ANDROID_ABI}" >&2
+        exit 2
+        ;;
+esac
+
+PYTHON_URL="https://www.python.org/ftp/python/${PYTHON_VERSION}/${PYTHON_ARCHIVE}"
+ABI_DEPS_DIR="${DEPS_DIR}/abi/${ANDROID_ABI}"
+ABI_BUILD_DIR="${BUILD_DIR}/${ANDROID_ABI}"
+JNI_LIB_DIR="${ABI_DEPS_DIR}/jniLibs/${ANDROID_ABI}"
+
+mkdir -p "${DOWNLOAD_DIR}" "${BUILD_DIR}" "${ABI_BUILD_DIR}" "${JNI_LIB_DIR}"
 
 sha256_file() {
     if command -v sha256sum >/dev/null 2>&1; then
@@ -153,27 +172,30 @@ if [[ ! -f "${DEPS_DIR}/sdl2/.gemrb-ready-${SDL_VERSION}" ]]; then
     touch "${DEPS_DIR}/sdl2/.gemrb-ready-${SDL_VERSION}"
 fi
 
-if [[ ! -f "${DEPS_DIR}/python/.gemrb-ready-${PYTHON_VERSION}" ]]; then
-    rm -rf "${DEPS_DIR}/python" "${BUILD_DIR}/python-${PYTHON_VERSION}"
-    mkdir -p "${DEPS_DIR}/python" "${BUILD_DIR}/python-${PYTHON_VERSION}"
-    tar -xzf "${DOWNLOAD_DIR}/${PYTHON_ARCHIVE}" -C "${BUILD_DIR}/python-${PYTHON_VERSION}"
-    python_prefix="$(find "${BUILD_DIR}/python-${PYTHON_VERSION}" -type d -name prefix -print -quit)"
+PYTHON_ROOT="${ABI_DEPS_DIR}/python"
+if [[ ! -f "${PYTHON_ROOT}/.gemrb-ready-${PYTHON_VERSION}" ]]; then
+    PYTHON_BUILD="${ABI_BUILD_DIR}/python-${PYTHON_VERSION}"
+    rm -rf "${PYTHON_ROOT}" "${PYTHON_BUILD}"
+    mkdir -p "${PYTHON_ROOT}" "${PYTHON_BUILD}"
+    tar -xzf "${DOWNLOAD_DIR}/${PYTHON_ARCHIVE}" -C "${PYTHON_BUILD}"
+    python_prefix="$(find "${PYTHON_BUILD}" -type d -name prefix -print -quit)"
     if [[ -z "${python_prefix}" ]]; then
         echo "Python Android archive does not contain a prefix directory" >&2
         exit 1
     fi
-    mv "${python_prefix}" "${DEPS_DIR}/python/prefix"
-    find "${DEPS_DIR}/python/prefix/lib" -maxdepth 1 -type f -name '*.so*' -exec cp -L {} "${DEPS_DIR}/jniLibs/arm64-v8a/" \;
-    touch "${DEPS_DIR}/python/.gemrb-ready-${PYTHON_VERSION}"
+    mv "${python_prefix}" "${PYTHON_ROOT}/prefix"
+    find "${PYTHON_ROOT}/prefix/lib" -maxdepth 1 -type f -name '*.so*' -exec cp -L {} "${JNI_LIB_DIR}/" \;
+    touch "${PYTHON_ROOT}/.gemrb-ready-${PYTHON_VERSION}"
 fi
 
-if [[ ! -f "${DEPS_DIR}/libiconv/.gemrb-ready-${ICONV_VERSION}" ]]; then
-    ICONV_SRC="${BUILD_DIR}/libiconv-${ICONV_VERSION}"
-    ICONV_PREFIX="${DEPS_DIR}/libiconv/prefix"
+ICONV_ROOT="${ABI_DEPS_DIR}/libiconv"
+if [[ ! -f "${ICONV_ROOT}/.gemrb-ready-${ICONV_VERSION}" ]]; then
+    ICONV_SRC="${ABI_BUILD_DIR}/libiconv-${ICONV_VERSION}"
+    ICONV_PREFIX="${ICONV_ROOT}/prefix"
 
-    rm -rf "${DEPS_DIR}/libiconv" "${ICONV_SRC}"
-    mkdir -p "${DEPS_DIR}/libiconv"
-    tar -xzf "${DOWNLOAD_DIR}/${ICONV_ARCHIVE}" -C "${BUILD_DIR}"
+    rm -rf "${ICONV_ROOT}" "${ICONV_SRC}"
+    mkdir -p "${ICONV_ROOT}"
+    tar -xzf "${DOWNLOAD_DIR}/${ICONV_ARCHIVE}" -C "${ABI_BUILD_DIR}"
 
     pushd "${ICONV_SRC}" >/dev/null
     CC="${CC}" CXX="${CXX}" AR="${AR}" RANLIB="${RANLIB}" STRIP="${STRIP}" \
@@ -187,15 +209,16 @@ if [[ ! -f "${DEPS_DIR}/libiconv/.gemrb-ready-${ICONV_VERSION}" ]]; then
     make -j"${JOBS}"
     make install
     popd >/dev/null
-    touch "${DEPS_DIR}/libiconv/.gemrb-ready-${ICONV_VERSION}"
+    touch "${ICONV_ROOT}/.gemrb-ready-${ICONV_VERSION}"
 fi
 
-if [[ ! -f "${DEPS_DIR}/freetype/.gemrb-ready-${FREETYPE_VERSION}" ]]; then
-    FREETYPE_SRC="${BUILD_DIR}/freetype-${FREETYPE_VERSION}"
-    FREETYPE_PREFIX="${DEPS_DIR}/freetype/prefix"
+FREETYPE_ROOT="${ABI_DEPS_DIR}/freetype"
+if [[ ! -f "${FREETYPE_ROOT}/.gemrb-ready-${FREETYPE_VERSION}" ]]; then
+    FREETYPE_SRC="${ABI_BUILD_DIR}/freetype-${FREETYPE_VERSION}"
+    FREETYPE_PREFIX="${FREETYPE_ROOT}/prefix"
 
-    rm -rf "${DEPS_DIR}/freetype" "${FREETYPE_SRC}"
-    tar -xzf "${DOWNLOAD_DIR}/${FREETYPE_ARCHIVE}" -C "${BUILD_DIR}"
+    rm -rf "${FREETYPE_ROOT}" "${FREETYPE_SRC}"
+    tar -xzf "${DOWNLOAD_DIR}/${FREETYPE_ARCHIVE}" -C "${ABI_BUILD_DIR}"
     pushd "${FREETYPE_SRC}" >/dev/null
     CC="${CC}" CXX="${CXX}" AR="${AR}" RANLIB="${RANLIB}" STRIP="${STRIP}" \
     CFLAGS="-fPIC" CXXFLAGS="-fPIC" \
@@ -212,15 +235,16 @@ if [[ ! -f "${DEPS_DIR}/freetype/.gemrb-ready-${FREETYPE_VERSION}" ]]; then
     make -j"${JOBS}"
     make install
     popd >/dev/null
-    touch "${DEPS_DIR}/freetype/.gemrb-ready-${FREETYPE_VERSION}"
+    touch "${FREETYPE_ROOT}/.gemrb-ready-${FREETYPE_VERSION}"
 fi
 
-if [[ ! -f "${DEPS_DIR}/libpng/.gemrb-ready-${PNG_VERSION}" ]]; then
-    PNG_SRC="${BUILD_DIR}/libpng-${PNG_VERSION}"
-    PNG_PREFIX="${DEPS_DIR}/libpng/prefix"
+PNG_ROOT="${ABI_DEPS_DIR}/libpng"
+if [[ ! -f "${PNG_ROOT}/.gemrb-ready-${PNG_VERSION}" ]]; then
+    PNG_SRC="${ABI_BUILD_DIR}/libpng-${PNG_VERSION}"
+    PNG_PREFIX="${PNG_ROOT}/prefix"
 
-    rm -rf "${DEPS_DIR}/libpng" "${PNG_SRC}"
-    tar -xzf "${DOWNLOAD_DIR}/${PNG_ARCHIVE}" -C "${BUILD_DIR}"
+    rm -rf "${PNG_ROOT}" "${PNG_SRC}"
+    tar -xzf "${DOWNLOAD_DIR}/${PNG_ARCHIVE}" -C "${ABI_BUILD_DIR}"
     pushd "${PNG_SRC}" >/dev/null
     CC="${CC}" CXX="${CXX}" AR="${AR}" RANLIB="${RANLIB}" STRIP="${STRIP}" \
     CFLAGS="-fPIC" CXXFLAGS="-fPIC" LIBS="-lz" \
@@ -232,15 +256,16 @@ if [[ ! -f "${DEPS_DIR}/libpng/.gemrb-ready-${PNG_VERSION}" ]]; then
     make -j"${JOBS}"
     make install
     popd >/dev/null
-    touch "${DEPS_DIR}/libpng/.gemrb-ready-${PNG_VERSION}"
+    touch "${PNG_ROOT}/.gemrb-ready-${PNG_VERSION}"
 fi
 
-if [[ ! -f "${DEPS_DIR}/libogg/.gemrb-ready-${OGG_VERSION}" ]]; then
-    OGG_SRC="${BUILD_DIR}/libogg-${OGG_VERSION}"
-    OGG_PREFIX="${DEPS_DIR}/libogg/prefix"
+OGG_ROOT="${ABI_DEPS_DIR}/libogg"
+if [[ ! -f "${OGG_ROOT}/.gemrb-ready-${OGG_VERSION}" ]]; then
+    OGG_SRC="${ABI_BUILD_DIR}/libogg-${OGG_VERSION}"
+    OGG_PREFIX="${OGG_ROOT}/prefix"
 
-    rm -rf "${DEPS_DIR}/libogg" "${OGG_SRC}"
-    tar -xzf "${DOWNLOAD_DIR}/${OGG_ARCHIVE}" -C "${BUILD_DIR}"
+    rm -rf "${OGG_ROOT}" "${OGG_SRC}"
+    tar -xzf "${DOWNLOAD_DIR}/${OGG_ARCHIVE}" -C "${ABI_BUILD_DIR}"
     pushd "${OGG_SRC}" >/dev/null
     CC="${CC}" CXX="${CXX}" AR="${AR}" RANLIB="${RANLIB}" STRIP="${STRIP}" \
     CFLAGS="-fPIC" CXXFLAGS="-fPIC" \
@@ -252,16 +277,17 @@ if [[ ! -f "${DEPS_DIR}/libogg/.gemrb-ready-${OGG_VERSION}" ]]; then
     make -j"${JOBS}"
     make install
     popd >/dev/null
-    touch "${DEPS_DIR}/libogg/.gemrb-ready-${OGG_VERSION}"
+    touch "${OGG_ROOT}/.gemrb-ready-${OGG_VERSION}"
 fi
 
-if [[ ! -f "${DEPS_DIR}/libvorbis/.gemrb-ready-${VORBIS_VERSION}" ]]; then
-    VORBIS_SRC="${BUILD_DIR}/libvorbis-${VORBIS_VERSION}"
-    VORBIS_PREFIX="${DEPS_DIR}/libvorbis/prefix"
-    OGG_PREFIX="${DEPS_DIR}/libogg/prefix"
+VORBIS_ROOT="${ABI_DEPS_DIR}/libvorbis"
+if [[ ! -f "${VORBIS_ROOT}/.gemrb-ready-${VORBIS_VERSION}" ]]; then
+    VORBIS_SRC="${ABI_BUILD_DIR}/libvorbis-${VORBIS_VERSION}"
+    VORBIS_PREFIX="${VORBIS_ROOT}/prefix"
+    OGG_PREFIX="${OGG_ROOT}/prefix"
 
-    rm -rf "${DEPS_DIR}/libvorbis" "${VORBIS_SRC}"
-    tar -xzf "${DOWNLOAD_DIR}/${VORBIS_ARCHIVE}" -C "${BUILD_DIR}"
+    rm -rf "${VORBIS_ROOT}" "${VORBIS_SRC}"
+    tar -xzf "${DOWNLOAD_DIR}/${VORBIS_ARCHIVE}" -C "${ABI_BUILD_DIR}"
     pushd "${VORBIS_SRC}" >/dev/null
     CC="${CC}" CXX="${CXX}" AR="${AR}" RANLIB="${RANLIB}" STRIP="${STRIP}" \
     CFLAGS="-fPIC" CXXFLAGS="-fPIC" \
@@ -276,7 +302,7 @@ if [[ ! -f "${DEPS_DIR}/libvorbis/.gemrb-ready-${VORBIS_VERSION}" ]]; then
     make -j"${JOBS}"
     make install
     popd >/dev/null
-    touch "${DEPS_DIR}/libvorbis/.gemrb-ready-${VORBIS_VERSION}"
+    touch "${VORBIS_ROOT}/.gemrb-ready-${VORBIS_VERSION}"
 fi
 
-echo "Android dependencies are ready in ${DEPS_DIR}"
+echo "Android dependencies for ${ANDROID_ABI} are ready in ${ABI_DEPS_DIR}"
