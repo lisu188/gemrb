@@ -73,12 +73,14 @@ if ! unzip -p "${APK}" assets/runtime.zip > "${RUNTIME_ARCHIVE}" || [[ ! -s "${R
     exit 1
 fi
 
+RUNTIME_LIST="${TMP}/runtime.list"
+unzip -Z1 "${RUNTIME_ARCHIVE}" > "${RUNTIME_LIST}"
 for required_asset in \
     VERSION \
     gemrb/GUIScripts/GUICommon.py \
     python/lib/python3.14/os.py \
     demo/chitin.key; do
-    if ! unzip -Z1 "${RUNTIME_ARCHIVE}" | grep -Fxq "${required_asset}"; then
+    if ! grep -Fxq "${required_asset}" "${RUNTIME_LIST}"; then
         echo "Required runtime asset missing from runtime archive: ${required_asset}" >&2
         exit 1
     fi
