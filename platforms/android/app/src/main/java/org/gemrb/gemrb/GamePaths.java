@@ -14,6 +14,23 @@ final class GamePaths {
         return new File(new File(externalRoot, "saves"), validateGameId(gameId));
     }
 
+    static File saveStagingPath(File externalRoot, String gameId) {
+        return new File(new File(externalRoot, "saves"), validateGameId(gameId) + ".tmp");
+    }
+
+    static String importedSaveDirectoryName(String sourceName) {
+        if (sourceName == null) {
+            return null;
+        }
+        if ("save".equalsIgnoreCase(sourceName)) {
+            return "save";
+        }
+        if ("mpsave".equalsIgnoreCase(sourceName)) {
+            return "mpsave";
+        }
+        return null;
+    }
+
     static String validateGameId(String gameId) {
         if (gameId == null
                 || gameId.isEmpty()
