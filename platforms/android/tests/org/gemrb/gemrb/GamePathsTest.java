@@ -24,6 +24,8 @@ public final class GamePathsTest {
         String secondConfig = ManagedConfig.build(runtime, secondGame, secondSave, cache, "auto");
         require(firstConfig.contains("SavePath=" + firstSave.getAbsolutePath() + "\n"), "first config SavePath missing");
         require(secondConfig.contains("SavePath=" + secondSave.getAbsolutePath() + "\n"), "second config SavePath missing");
+        require(firstConfig.contains("AudioDriver=openal\n"), "OpenAL audio driver missing");
+        require(secondConfig.contains("AudioDriver=openal\n"), "OpenAL audio driver missing");
         require(!firstConfig.equals(secondConfig), "per-game configs are identical");
 
         expectInvalid("");
