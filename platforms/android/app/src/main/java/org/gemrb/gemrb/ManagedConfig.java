@@ -22,7 +22,7 @@ final class ManagedConfig {
                 + "GemRBUnhardcodedPath=" + gemrbData.getAbsolutePath() + "\n"
                 + "SavePath=" + savePath.getAbsolutePath() + "\n"
                 + "CachePath=" + cachePath.getAbsolutePath() + "\n"
-                + "AudioDriver=none\n"
+                + "AudioDriver=openal\n"
                 + "Logging=1\n"
                 + "SkipIntroVideos=1\n"
                 + "TouchInput=1\n"
