@@ -119,7 +119,7 @@ val prepareRuntimeMarker by tasks.registering {
     doLast {
         val marker = runtimeMarkerDir.resolve("VERSION")
         marker.parentFile.mkdirs()
-        marker.writeText("m3-2\n")
+        marker.writeText("m3-1\n")
     }
 }
 
