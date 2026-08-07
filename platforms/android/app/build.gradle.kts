@@ -1,3 +1,5 @@
+import org.gradle.api.tasks.bundling.Zip
+
 plugins {
     id("com.android.application")
 }
@@ -19,6 +21,7 @@ val openalPrefix = abiDepsDir.resolve("openal/prefix")
 val sdl2Root = depsDir.resolve("sdl2")
 val androidBootstrap = rootProject.projectDir.resolve("cmake/AndroidBootstrap.cmake")
 val generatedAssetsDir = layout.buildDirectory.dir("generated/m1Assets").get().asFile
+val runtimeMarkerDir = layout.buildDirectory.dir("generated/m1RuntimeMarker").get().asFile
 
 android {
     namespace = "org.gemrb.gemrb"
@@ -85,6 +88,10 @@ android {
         }
     }
 
+    androidResources {
+        noCompress += "zip"
+    }
+
     buildTypes {
         getByName("debug") {
             isMinifyEnabled = false
@@ -107,25 +114,35 @@ val prepareAndroidDependencies by tasks.registering(Exec::class) {
     commandLine("bash", "-c", "bash scripts/prefetch-mirrors.sh && bash scripts/prepare-dependencies.sh && bash scripts/prepare-openal.sh")
 }
 
-val stageAndroidRuntimeAssets by tasks.registering(Sync::class) {
-    dependsOn(prepareAndroidDependencies)
-    into(generatedAssetsDir)
+val prepareRuntimeMarker by tasks.registering {
+    outputs.file(runtimeMarkerDir.resolve("VERSION"))
+    doLast {
+        val marker = runtimeMarkerDir.resolve("VERSION")
+        marker.parentFile.mkdirs()
+        marker.writeText("m3-2\n")
+    }
+}
+
+val packageAndroidRuntime by tasks.registering(Zip::class) {
+    dependsOn(prepareAndroidDependencies, prepareRuntimeMarker)
+    archiveFileName.set("runtime.zip")
+    destinationDirectory.set(generatedAssetsDir)
 
     from(repoRoot.resolve("gemrb/GUIScripts")) {
-        into("runtime/gemrb/GUIScripts")
+        into("gemrb/GUIScripts")
         exclude("**/__pycache__/**", "**/*.pyc")
     }
     from(repoRoot.resolve("gemrb/override")) {
-        into("runtime/gemrb/override")
+        into("gemrb/override")
     }
     from(repoRoot.resolve("gemrb/unhardcoded")) {
-        into("runtime/gemrb/unhardcoded")
+        into("gemrb/unhardcoded")
     }
     from(repoRoot.resolve("demo")) {
-        into("runtime/demo")
+        into("demo")
     }
     from(pythonPrefix.resolve("lib/python3.14")) {
-        into("runtime/python/lib/python3.14")
+        into("python/lib/python3.14")
         exclude(
             "**/__pycache__/**",
             "**/*.pyc",
@@ -137,18 +154,13 @@ val stageAndroidRuntimeAssets by tasks.registering(Sync::class) {
             "ensurepip/**"
         )
     }
-
-    doLast {
-        val marker = generatedAssetsDir.resolve("runtime/VERSION")
-        marker.parentFile.mkdirs()
-        marker.writeText("m3-1\n")
-    }
+    from(runtimeMarkerDir.resolve("VERSION"))
 }
 
 tasks.named("preBuild") {
-    dependsOn(stageAndroidRuntimeAssets)
+    dependsOn(packageAndroidRuntime)
 }
 
 tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }.configureEach {
-    dependsOn(stageAndroidRuntimeAssets)
+    dependsOn(packageAndroidRuntime)
 }
