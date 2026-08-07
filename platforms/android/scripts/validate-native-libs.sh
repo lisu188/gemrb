@@ -67,16 +67,28 @@ for required_marker in \
     fi
 done
 
+RUNTIME_ARCHIVE="${TMP}/runtime.zip"
+if ! unzip -p "${APK}" assets/runtime.zip > "${RUNTIME_ARCHIVE}" || [[ ! -s "${RUNTIME_ARCHIVE}" ]]; then
+    echo "Required runtime archive missing from APK: assets/runtime.zip" >&2
+    exit 1
+fi
+
 for required_asset in \
-    assets/runtime/VERSION \
-    assets/runtime/gemrb/GUIScripts/GUICommon.py \
-    assets/runtime/python/lib/python3.14/os.py \
-    assets/runtime/demo/chitin.key; do
-    if ! unzip -Z1 "${APK}" | grep -Fxq "${required_asset}"; then
-        echo "Required runtime asset missing from APK: ${required_asset}" >&2
+    VERSION \
+    gemrb/GUIScripts/GUICommon.py \
+    python/lib/python3.14/os.py \
+    demo/chitin.key; do
+    if ! unzip -Z1 "${RUNTIME_ARCHIVE}" | grep -Fxq "${required_asset}"; then
+        echo "Required runtime asset missing from runtime archive: ${required_asset}" >&2
         exit 1
     fi
 done
+
+runtime_version="$(unzip -p "${RUNTIME_ARCHIVE}" VERSION | tr -d '\r\n')"
+if [[ "${runtime_version}" != "m3-1" ]]; then
+    echo "Unexpected runtime archive version: ${runtime_version}" >&2
+    exit 1
+fi
 
 status=0
 while IFS= read -r -d '' library; do
