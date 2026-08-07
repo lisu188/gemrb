@@ -40,13 +40,47 @@ raise SystemExit(1)
 PY
 }
 
+capture_log() {
+    adb logcat -d -v threadtime > "${LOG_FILE}"
+}
+
+dump_app_threads() {
+    local pid
+    pid="$(adb shell pidof "${PACKAGE}" 2>/dev/null | tr -d '\r' | awk '{print $1}')"
+    if [[ -n "${pid}" ]]; then
+        adb shell kill -3 "${pid}" || true
+        sleep 1
+    fi
+    capture_log
+}
+
 adb install -r "${APK}"
+adb shell pm clear "${PACKAGE}" >/dev/null
 adb logcat -c
-adb shell am force-stop "${PACKAGE}"
 adb shell am start -W -n "${PACKAGE}/${BOOTSTRAP_ACTIVITY}"
 
+runtime_extracted=false
+for _ in $(seq 1 240); do
+    capture_log
+    if grep -aFq "GEMRB_ANDROID_RUNTIME_EXTRACT_DONE" "${LOG_FILE}"; then
+        runtime_extracted=true
+        break
+    fi
+    if grep -aFq "Android runtime bootstrap failed" "${LOG_FILE}"; then
+        break
+    fi
+    sleep 1
+done
+
+if [[ "${runtime_extracted}" != true ]]; then
+    dump_app_threads
+    echo "GemRB runtime extraction did not complete" >&2
+    grep -aF "GEMRB_ANDROID_RUNTIME_EXTRACT_" "${LOG_FILE}" >&2 || true
+    exit 1
+fi
+
 button_center=""
-for _ in $(seq 1 120); do
+for _ in $(seq 1 10); do
     if button_center="$(find_demo_center)"; then
         break
     fi
@@ -54,8 +88,8 @@ for _ in $(seq 1 120); do
 done
 
 if [[ -z "${button_center}" ]]; then
-    adb logcat -d -v threadtime > "${LOG_FILE}"
-    echo "Bundled demo launch button did not become available" >&2
+    dump_app_threads
+    echo "Bundled demo launch button did not become available after runtime extraction" >&2
     exit 1
 fi
 
@@ -72,7 +106,7 @@ markers=(
 
 all_markers=false
 for _ in $(seq 1 180); do
-    adb logcat -d -v threadtime > "${LOG_FILE}"
+    capture_log
     all_markers=true
     for marker in "${markers[@]}"; do
         if ! grep -aFq "${marker}" "${LOG_FILE}"; then
@@ -87,6 +121,7 @@ for _ in $(seq 1 180); do
 done
 
 if [[ "${all_markers}" != true ]]; then
+    dump_app_threads
     echo "GemRB did not reach all startup markers" >&2
     for marker in "${markers[@]}"; do
         if ! grep -aFq "${marker}" "${LOG_FILE}"; then
@@ -97,7 +132,7 @@ if [[ "${all_markers}" != true ]]; then
 fi
 
 sleep 5
-adb logcat -d -v threadtime > "${LOG_FILE}"
+capture_log
 if [[ -z "$(adb shell pidof "${PACKAGE}" 2>/dev/null | tr -d '\r')" ]]; then
     echo "GemRB process exited after startup" >&2
     exit 1
