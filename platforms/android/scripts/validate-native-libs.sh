@@ -1,12 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 1 ]]; then
-    echo "usage: $0 <apk>" >&2
+if [[ $# -lt 1 || $# -gt 2 ]]; then
+    echo "usage: $0 <apk> [abi]" >&2
     exit 2
 fi
 
 APK="$(realpath "$1")"
+ANDROID_ABI="${2:-${GEMRB_ANDROID_ABI:-arm64-v8a}}"
+case "${ANDROID_ABI}" in
+    arm64-v8a|x86_64) ;;
+    *)
+        echo "Unsupported Android ABI: ${ANDROID_ABI}" >&2
+        exit 2
+        ;;
+esac
+
 if [[ ! -f "${APK}" ]]; then
     echo "APK not found: ${APK}" >&2
     exit 1
@@ -33,12 +42,15 @@ fi
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
-unzip -q "${APK}" 'lib/arm64-v8a/*.so' -d "${TMP}"
-LIB_DIR="${TMP}/lib/arm64-v8a"
+if ! unzip -q "${APK}" "lib/${ANDROID_ABI}/*.so" -d "${TMP}"; then
+    echo "No native libraries for ${ANDROID_ABI} found in APK" >&2
+    exit 1
+fi
+LIB_DIR="${TMP}/lib/${ANDROID_ABI}"
 
 for required in libmain.so libSDL2.so libpython3.14.so; do
     if [[ ! -f "${LIB_DIR}/${required}" ]]; then
-        echo "Required native library missing from APK: ${required}" >&2
+        echo "Required native library missing from APK for ${ANDROID_ABI}: ${required}" >&2
         exit 1
     fi
 done
@@ -68,7 +80,7 @@ done
 
 status=0
 while IFS= read -r -d '' library; do
-    echo "Checking 16 KB ELF alignment: $(basename "${library}")"
+    echo "Checking 16 KB ELF alignment for ${ANDROID_ABI}: $(basename "${library}")"
     while read -r alignment; do
         value=$((alignment))
         if (( value < 0x4000 )); then
