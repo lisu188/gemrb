@@ -14,11 +14,19 @@ public final class GamePathsTest {
         File secondGame = GamePaths.gamePath(root, secondId);
         File firstSave = GamePaths.savePath(root, firstId);
         File secondSave = GamePaths.savePath(root, secondId);
+        File firstSaveStaging = GamePaths.saveStagingPath(root, firstId);
 
         require(!firstGame.getCanonicalPath().equals(secondGame.getCanonicalPath()), "game roots collide");
         require(!firstSave.getCanonicalPath().equals(secondSave.getCanonicalPath()), "save roots collide");
         require(firstSave.getPath().endsWith("saves" + File.separator + firstId), "first save root is not per-game");
         require(secondSave.getPath().endsWith("saves" + File.separator + secondId), "second save root is not per-game");
+        require(firstSaveStaging.getPath().endsWith("saves" + File.separator + firstId + ".tmp"), "save staging root is not per-game");
+
+        require("save".equals(GamePaths.importedSaveDirectoryName("save")), "save directory not recognized");
+        require("save".equals(GamePaths.importedSaveDirectoryName("SAVE")), "save directory is not normalized");
+        require("mpsave".equals(GamePaths.importedSaveDirectoryName("MpSaVe")), "mpsave directory is not normalized");
+        require(GamePaths.importedSaveDirectoryName("override") == null, "non-save directory marked for migration");
+        require(GamePaths.importedSaveDirectoryName(null) == null, "null directory marked for migration");
 
         String firstConfig = ManagedConfig.build(runtime, firstGame, firstSave, cache, "auto");
         String secondConfig = ManagedConfig.build(runtime, secondGame, secondSave, cache, "auto");
