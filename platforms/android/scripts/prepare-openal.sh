@@ -14,8 +14,22 @@ OPENAL_SHA256="1dbaac44e7579d5bc8847ca8db4b2e8b9fd3961041f35ee20def4958301e1089"
 
 NDK_VERSION="29.0.14206865"
 ANDROID_API="28"
+ANDROID_ABI="${GEMRB_ANDROID_ABI:-arm64-v8a}"
 
-mkdir -p "${DOWNLOAD_DIR}" "${BUILD_DIR}"
+case "${ANDROID_ABI}" in
+    arm64-v8a|x86_64) ;;
+    *)
+        echo "Unsupported Android ABI: ${ANDROID_ABI}" >&2
+        exit 2
+        ;;
+esac
+
+ABI_DEPS_DIR="${DEPS_DIR}/abi/${ANDROID_ABI}"
+ABI_BUILD_DIR="${BUILD_DIR}/${ANDROID_ABI}"
+OPENAL_ROOT="${ABI_DEPS_DIR}/openal"
+OPENAL_PREFIX="${OPENAL_ROOT}/prefix"
+
+mkdir -p "${DOWNLOAD_DIR}" "${ABI_BUILD_DIR}"
 
 sha256_file() {
     if command -v sha256sum >/dev/null 2>&1; then
@@ -74,26 +88,25 @@ if [[ ! -f "${archive}" ]]; then
     mv "${temporary}" "${archive}"
 fi
 
-if [[ -f "${DEPS_DIR}/openal/.gemrb-ready-${OPENAL_VERSION}" ]]; then
-    echo "OpenAL Soft ${OPENAL_VERSION} is ready"
+if [[ -f "${OPENAL_ROOT}/.gemrb-ready-${OPENAL_VERSION}" ]]; then
+    echo "OpenAL Soft ${OPENAL_VERSION} for ${ANDROID_ABI} is ready"
     exit 0
 fi
 
 NDK_ROOT="$(resolve_ndk)"
-OPENAL_SRC="${BUILD_DIR}/openal-soft-${OPENAL_VERSION}"
-OPENAL_BUILD="${BUILD_DIR}/openal-soft-${OPENAL_VERSION}-android"
-OPENAL_PREFIX="${DEPS_DIR}/openal/prefix"
+OPENAL_SRC="${ABI_BUILD_DIR}/openal-soft-${OPENAL_VERSION}"
+OPENAL_BUILD="${ABI_BUILD_DIR}/openal-soft-${OPENAL_VERSION}-build"
 
-rm -rf "${DEPS_DIR}/openal" "${OPENAL_SRC}" "${OPENAL_BUILD}"
-mkdir -p "${DEPS_DIR}/openal"
-tar -xjf "${archive}" -C "${BUILD_DIR}"
+rm -rf "${OPENAL_ROOT}" "${OPENAL_SRC}" "${OPENAL_BUILD}"
+mkdir -p "${OPENAL_ROOT}"
+tar -xjf "${archive}" -C "${ABI_BUILD_DIR}"
 
 cmake \
     -S "${OPENAL_SRC}" \
     -B "${OPENAL_BUILD}" \
     -G Ninja \
     -DCMAKE_TOOLCHAIN_FILE="${NDK_ROOT}/build/cmake/android.toolchain.cmake" \
-    -DANDROID_ABI=arm64-v8a \
+    -DANDROID_ABI="${ANDROID_ABI}" \
     -DANDROID_PLATFORM="android-${ANDROID_API}" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX="${OPENAL_PREFIX}" \
@@ -134,5 +147,5 @@ if [[ ! -f "${OPENAL_PREFIX}/lib/libopenal.a" || ! -f "${OPENAL_PREFIX}/include/
     exit 1
 fi
 
-touch "${DEPS_DIR}/openal/.gemrb-ready-${OPENAL_VERSION}"
-echo "OpenAL Soft ${OPENAL_VERSION} is ready in ${OPENAL_PREFIX}"
+touch "${OPENAL_ROOT}/.gemrb-ready-${OPENAL_VERSION}"
+echo "OpenAL Soft ${OPENAL_VERSION} for ${ANDROID_ABI} is ready in ${OPENAL_PREFIX}"
