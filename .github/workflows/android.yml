@@ -22,9 +22,18 @@ permissions:
   contents: read
 
 jobs:
-  arm64-debug:
+  android-debug:
+    name: ${{ matrix.abi }} debug
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        abi:
+          - arm64-v8a
+          - x86_64
+    env:
+      GEMRB_ANDROID_ABI: ${{ matrix.abi }}
 
     steps:
       - uses: actions/checkout@v4
@@ -76,23 +85,23 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          gradle :app:assembleDebug --stacktrace --info 2>&1 | tee "$GITHUB_WORKSPACE/android-build.log"
+          gradle :app:assembleDebug -PgemrbAbi="${GEMRB_ANDROID_ABI}" --stacktrace --info 2>&1 | tee "$GITHUB_WORKSPACE/android-build-${GEMRB_ANDROID_ABI}.log"
 
       - name: Upload Android build log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: android-build-log
-          path: android-build.log
+          name: android-build-log-${{ matrix.abi }}
+          path: android-build-${{ matrix.abi }}.log
           if-no-files-found: warn
 
       - name: Validate packaged native libraries
         working-directory: platforms/android
-        run: bash scripts/validate-native-libs.sh app/build/outputs/apk/debug/app-debug.apk
+        run: bash scripts/validate-native-libs.sh app/build/outputs/apk/debug/app-debug.apk "${GEMRB_ANDROID_ABI}"
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: gemrb-android-arm64-debug
+          name: gemrb-android-${{ matrix.abi }}-debug
           path: platforms/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: ignore
