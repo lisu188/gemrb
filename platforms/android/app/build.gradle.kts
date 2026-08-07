@@ -4,13 +4,18 @@ plugins {
 
 val repoRoot = rootProject.projectDir.resolve("../..").canonicalFile
 val depsDir = rootProject.projectDir.resolve(".deps").canonicalFile
-val pythonPrefix = depsDir.resolve("python/prefix")
-val iconvPrefix = depsDir.resolve("libiconv/prefix")
-val freetypePrefix = depsDir.resolve("freetype/prefix")
-val pngPrefix = depsDir.resolve("libpng/prefix")
-val oggPrefix = depsDir.resolve("libogg/prefix")
-val vorbisPrefix = depsDir.resolve("libvorbis/prefix")
-val openalPrefix = depsDir.resolve("openal/prefix")
+val gemrbAbi = providers.gradleProperty("gemrbAbi").orElse("arm64-v8a").get()
+require(gemrbAbi in setOf("arm64-v8a", "x86_64")) {
+    "Unsupported GemRB Android ABI: $gemrbAbi"
+}
+val abiDepsDir = depsDir.resolve("abi/$gemrbAbi")
+val pythonPrefix = abiDepsDir.resolve("python/prefix")
+val iconvPrefix = abiDepsDir.resolve("libiconv/prefix")
+val freetypePrefix = abiDepsDir.resolve("freetype/prefix")
+val pngPrefix = abiDepsDir.resolve("libpng/prefix")
+val oggPrefix = abiDepsDir.resolve("libogg/prefix")
+val vorbisPrefix = abiDepsDir.resolve("libvorbis/prefix")
+val openalPrefix = abiDepsDir.resolve("openal/prefix")
 val sdl2Root = depsDir.resolve("sdl2")
 val androidBootstrap = rootProject.projectDir.resolve("cmake/AndroidBootstrap.cmake")
 val generatedAssetsDir = layout.buildDirectory.dir("generated/m1Assets").get().asFile
@@ -28,7 +33,7 @@ android {
         versionName = "0.9.5-android-m4"
 
         ndk {
-            abiFilters += listOf("arm64-v8a")
+            abiFilters += listOf(gemrbAbi)
         }
 
         externalNativeBuild {
@@ -75,7 +80,7 @@ android {
     sourceSets {
         getByName("main") {
             java.srcDir(sdl2Root.resolve("android-project/app/src/main/java"))
-            jniLibs.srcDir(depsDir.resolve("jniLibs"))
+            jniLibs.srcDir(abiDepsDir.resolve("jniLibs"))
             assets.srcDir(generatedAssetsDir)
         }
     }
@@ -98,6 +103,7 @@ android {
 
 val prepareAndroidDependencies by tasks.registering(Exec::class) {
     workingDir = rootProject.projectDir
+    environment("GEMRB_ANDROID_ABI", gemrbAbi)
     commandLine("bash", "-c", "bash scripts/prefetch-mirrors.sh && bash scripts/prepare-dependencies.sh && bash scripts/prepare-openal.sh")
 }
 
