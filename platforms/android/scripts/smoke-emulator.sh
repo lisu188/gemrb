@@ -28,7 +28,7 @@ import xml.etree.ElementTree as ET
 
 root = ET.parse(sys.argv[1]).getroot()
 for node in root.iter("node"):
-    if node.attrib.get("text") != "Launch bundled demo":
+    if node.attrib.get("text", "").casefold() != "Launch bundled demo".casefold():
         continue
     match = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", node.attrib.get("bounds", ""))
     if match is None:
