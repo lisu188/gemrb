@@ -758,23 +758,31 @@ Holder<Sprite2D> SDL20VideoDriver::GetScreenshot(Region r, const VideoBufferPtr&
 int SDL20VideoDriver::GetTouchFingers(TouchEvent::Finger (&fingers)[FINGER_MAX], SDL_TouchID device) const
 {
 	int numf = SDL_GetNumTouchFingers(device);
+	if (numf <= 0) {
+		return 0;
+	}
 
-	for (int i = 0; i < numf; ++i) {
+	int populated = 0;
+	for (int i = 0; i < numf && populated < FINGER_MAX; ++i) {
 		const SDL_Finger* finger = SDL_GetTouchFinger(device, i);
-		assert(finger);
+		if (!finger) {
+			continue;
+		}
 
-		fingers[i].id = finger->id;
-		fingers[i].x = finger->x * screenSize.w;
-		fingers[i].y = finger->y * screenSize.h;
+		TouchEvent::Finger& output = fingers[populated];
+		output.id = finger->id;
+		output.x = finger->x * screenSize.w;
+		output.y = finger->y * screenSize.h;
 
 		const TouchEvent::Finger* current = EventMgr::FingerState(finger->id);
 		if (current) {
-			fingers[i].deltaX = fingers[i].x - current->x;
-			fingers[i].deltaY = fingers[i].y - current->y;
+			output.deltaX = output.x - current->x;
+			output.deltaY = output.y - current->y;
 		}
+		++populated;
 	}
 
-	return numf;
+	return populated;
 }
 
 bool SDL20VideoDriver::ProcessControllerEvent(const SDL_Event& event)
@@ -889,7 +897,10 @@ int SDL20VideoDriver::ProcessEvent(const SDL_Event& event)
 		case SDL_FINGERMOTION:
 			{
 				TouchEvent::Finger fingers[FINGER_MAX] = {}; // 0 init
-				int numf = GetTouchFingers(fingers, event.mgesture.touchId);
+				int numf = GetTouchFingers(fingers, event.tfinger.touchId);
+				if (numf == 0) {
+					break;
+				}
 
 				Event touch = EventMgr::CreateTouchEvent(fingers, numf, true, event.tfinger.pressure);
 				// TODO: it may make more sense to calculate a pinch/rotation from screen center?
@@ -906,6 +917,9 @@ int SDL20VideoDriver::ProcessEvent(const SDL_Event& event)
 			{
 				TouchEvent::Finger fingers[FINGER_MAX] = {}; // 0 init
 				int numf = GetTouchFingers(fingers, event.mgesture.touchId);
+				if (numf == 0) {
+					break;
+				}
 
 				// TODO: it may make more sense to calculate the pressure as an avg?
 				Event touch = EventMgr::CreateTouchEvent(fingers, numf, true, 0.0);
