@@ -102,6 +102,7 @@ markers=(
     GEMRB_ANDROID_ENGINE_INIT
     GEMRB_ANDROID_PYTHON_INIT
     GEMRB_ANDROID_GUI_INIT
+    GEMRB_ANDROID_DEMO_READY
 )
 
 all_markers=false
@@ -138,4 +139,55 @@ if [[ -z "$(adb shell pidof "${PACKAGE}" 2>/dev/null | tr -d '\r')" ]]; then
     exit 1
 fi
 
-echo "GemRB emulator smoke test reached GUI initialization and remained alive"
+if [[ -n "${GEMRB_ANDROID_SMOKE_SCREENSHOT:-}" ]]; then
+    resumed_activity="$(adb shell dumpsys activity activities \
+        | grep -aEm1 'mResumedActivity|topResumedActivity' || true)"
+    if [[ "${resumed_activity}" != *"${PACKAGE}/.GemRBActivity"* ]]; then
+        echo "GemRBActivity is not the top-resumed activity: ${resumed_activity}" >&2
+        exit 1
+    fi
+
+    mkdir -p "$(dirname "${GEMRB_ANDROID_SMOKE_SCREENSHOT}")"
+    adb exec-out screencap -p > "${GEMRB_ANDROID_SMOKE_SCREENSHOT}"
+    python3 - "${GEMRB_ANDROID_SMOKE_SCREENSHOT}" <<'PY'
+import struct
+import sys
+import zlib
+
+payload = open(sys.argv[1], "rb").read()
+if not payload.startswith(b"\x89PNG\r\n\x1a\n"):
+    raise SystemExit("GemRB emulator screenshot is not a PNG")
+
+offset = 8
+dimensions = None
+image_data = []
+saw_iend = False
+while offset + 12 <= len(payload):
+    length = struct.unpack(">I", payload[offset:offset + 4])[0]
+    chunk_type = payload[offset + 4:offset + 8]
+    chunk_end = offset + 12 + length
+    if chunk_end > len(payload):
+        raise SystemExit("GemRB emulator screenshot has a truncated PNG chunk")
+    chunk_data = payload[offset + 8:offset + 8 + length]
+    expected_crc = struct.unpack(">I", payload[offset + 8 + length:chunk_end])[0]
+    actual_crc = zlib.crc32(chunk_type + chunk_data) & 0xFFFFFFFF
+    if actual_crc != expected_crc:
+        raise SystemExit("GemRB emulator screenshot has an invalid PNG checksum")
+    if chunk_type == b"IHDR":
+        dimensions = struct.unpack(">II", chunk_data[:8])
+    elif chunk_type == b"IDAT":
+        image_data.append(chunk_data)
+    elif chunk_type == b"IEND":
+        if length != 0:
+            raise SystemExit("GemRB emulator screenshot has an invalid PNG end chunk")
+        saw_iend = True
+        break
+    offset = chunk_end
+
+if dimensions is None or min(dimensions) <= 0 or not image_data or not saw_iend:
+    raise SystemExit("GemRB emulator screenshot is missing required PNG chunks")
+zlib.decompress(b"".join(image_data))
+PY
+fi
+
+echo "GemRB emulator smoke test reached the bundled demo and remained alive"

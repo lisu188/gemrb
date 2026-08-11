@@ -47,6 +47,8 @@ def OnLoad():
 	InventoryButton.SetText ("I")
 	InventoryButton.OnPress (GUIINV.OpenInventoryWindow)
 
+	print("GEMRB_ANDROID_DEMO_READY")
+
 def UpdateControlStatus():
 	pass
 

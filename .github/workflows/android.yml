@@ -135,7 +135,7 @@ jobs:
           target: default
           emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -no-boot-anim -camera-back none
           disable-animations: true
-          script: GEMRB_ANDROID_SMOKE_LOG="$GITHUB_WORKSPACE/gemrb-emulator.log" bash platforms/android/scripts/smoke-emulator.sh android-artifact/app-debug.apk
+          script: GEMRB_ANDROID_SMOKE_LOG="$GITHUB_WORKSPACE/gemrb-emulator.log" GEMRB_ANDROID_SMOKE_SCREENSHOT="$GITHUB_WORKSPACE/gemrb-emulator.png" bash platforms/android/scripts/smoke-emulator.sh android-artifact/app-debug.apk
 
       - name: Upload emulator log
         if: always()
@@ -143,4 +143,12 @@ jobs:
         with:
           name: gemrb-android-x86_64-emulator-log
           path: gemrb-emulator.log
+          if-no-files-found: warn
+
+      - name: Upload emulator screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gemrb-android-x86_64-emulator-screenshot
+          path: gemrb-emulator.png
           if-no-files-found: warn
