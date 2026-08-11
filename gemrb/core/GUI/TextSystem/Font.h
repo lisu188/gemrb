@@ -163,6 +163,7 @@ private:
 
 public:
 	Font(Holder<Palette> pal, ieWord lineheight, ieWord baseline, bool bg);
+	virtual ~Font() = default;
 	Font(const Font&) = delete;
 	Font& operator=(const Font&) = delete;
 

@@ -1,0 +1,13 @@
+if(NOT ANDROID OR NOT DEFINED GEMRB_ANDROID_FREETYPE_PREFIX)
+    include("${CMAKE_ROOT}/Modules/FindFreetype.cmake")
+    return()
+endif()
+
+set(FREETYPE_INCLUDE_DIRS "${GEMRB_ANDROID_FREETYPE_PREFIX}/include/freetype2")
+set(FREETYPE_LIBRARIES "${GEMRB_ANDROID_FREETYPE_PREFIX}/lib/libfreetype.a")
+
+if(EXISTS "${FREETYPE_INCLUDE_DIRS}/ft2build.h" AND EXISTS "${FREETYPE_LIBRARIES}")
+    set(FREETYPE_FOUND TRUE)
+else()
+    set(FREETYPE_FOUND FALSE)
+endif()
