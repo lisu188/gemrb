@@ -10,6 +10,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 
 import java.io.File;
@@ -30,6 +31,7 @@ public final class BootstrapActivity extends Activity {
     private static final Object RUNTIME_INSTALL_LOCK = new Object();
 
     private final AtomicBoolean destroyed = new AtomicBoolean(false);
+    private final AtomicBoolean launchStarted = new AtomicBoolean(false);
 
     private TextView statusView;
     private Button launchDemoButton;
@@ -137,7 +139,13 @@ public final class BootstrapActivity extends Activity {
         });
         layout.addView(cancelButton);
 
-        setContentView(layout);
+        ScrollView scrollView = new ScrollView(this);
+        scrollView.setFillViewport(true);
+        scrollView.addView(layout, new ScrollView.LayoutParams(
+                ScrollView.LayoutParams.MATCH_PARENT,
+                ScrollView.LayoutParams.WRAP_CONTENT
+        ));
+        setContentView(scrollView);
     }
 
     private void prepareRuntime() {
@@ -217,7 +225,9 @@ public final class BootstrapActivity extends Activity {
             }
 
             GameRegistry.add(this, result.gameId, result.displayName);
-            launchGame(result.gamePath, result.gameId, "auto", cancellation);
+            if (beginLaunch(cancellation)) {
+                launchGame(result.gamePath, result.gameId, "auto", cancellation);
+            }
         } catch (Exception error) {
             if (cancellation.get() || !isActivityUsable()) {
                 if (result != null) {
@@ -251,6 +261,9 @@ public final class BootstrapActivity extends Activity {
         if (currentRuntime == null || !isActivityUsable()) {
             return;
         }
+        if (!beginLaunch(null)) {
+            return;
+        }
         File demoPath = new File(currentRuntime, "demo");
         new Thread(
                 () -> launchGame(demoPath, "demo-bootstrap", "demo", null),
@@ -263,6 +276,9 @@ public final class BootstrapActivity extends Activity {
         if (gamePath == null || findCaseInsensitive(gamePath, "chitin.key") == null) {
             setStatus("Imported game storage is unavailable.");
             refreshImportedGames();
+            return;
+        }
+        if (!beginLaunch(null)) {
             return;
         }
         GameRegistry.select(this, entry.gameId, entry.displayName);
@@ -299,10 +315,29 @@ public final class BootstrapActivity extends Activity {
                 finish();
             });
         } catch (Exception error) {
+            launchStarted.set(false);
             if (isOperationUsable(cancellation)) {
                 fail("Cannot launch GemRB", error);
+                postIfActive(() -> {
+                    setImporting(false);
+                    refreshImportedGames();
+                });
             }
         }
+    }
+
+    private boolean beginLaunch(AtomicBoolean cancellation) {
+        if (!isOperationUsable(cancellation) || !launchStarted.compareAndSet(false, true)) {
+            return false;
+        }
+        postIfActive(() -> {
+            launchDemoButton.setEnabled(false);
+            setImportedButtonsEnabled(false);
+            importButton.setEnabled(false);
+            cancelButton.setVisibility(View.GONE);
+            setStatus("Starting GemRB…");
+        });
+        return true;
     }
 
     private void setImporting(boolean importing) {
