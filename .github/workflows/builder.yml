@@ -61,6 +61,81 @@ jobs:
         cd build
         xvfb-run make test
 
+  windows:
+    name: Test runner Windows MSVC build
+    runs-on: windows-2022
+    timeout-minutes: 90
+    env:
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-binary-cache
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v6
+
+    - name: Checkout vcpkg
+      uses: actions/checkout@v6
+      with:
+        repository: microsoft/vcpkg
+        # Match the dependency baseline in platforms/windows/vcpkg.json.
+        ref: f93ba152d55e1d243160e690bc302ffe8638358e
+        path: vcpkg
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.10'
+        architecture: x64
+
+    - name: Set up build tools
+      run: |
+        # The pinned dependency ports predate CMake 4 policy removals.
+        python -m pip install cmake==3.31.6
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        # Use native executables so PYTHONHOME cannot break pip's launchers.
+        python -c "import cmake; print(cmake.CMAKE_BIN_DIR)" >> $env:GITHUB_PATH
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        New-Item -ItemType Directory -Force $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+        ./vcpkg/bootstrap-vcpkg.bat -disableMetrics
+
+    - name: Cache dependencies
+      uses: actions/cache@v5
+      with:
+        path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+        key: windows-msvc-vcpkg-v1-${{ hashFiles('platforms/windows/vcpkg.json') }}-${{ github.sha }}
+        restore-keys: |
+          windows-msvc-vcpkg-v1-${{ hashFiles('platforms/windows/vcpkg.json') }}-
+
+    - name: Set up build
+      run: |
+        $dependencies = "$env:GITHUB_WORKSPACE/build/vcpkg_installed/x64-windows"
+        # Existing CTest commands capture PATH at configure time.
+        $env:PATH = "$dependencies/bin;$dependencies/tools/python3;$env:PATH"
+        cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
+          -DCMAKE_BUILD_TYPE=Release -DUSE_TESTS=ON `
+          "-DCMAKE_TOOLCHAIN_FILE=$env:GITHUB_WORKSPACE/vcpkg/scripts/buildsystems/vcpkg.cmake" `
+          -DVCPKG_TARGET_TRIPLET=x64-windows `
+          "-DPYTHON_VERSION=3.10...<3.11" `
+          "-DPython3_EXECUTABLE=$env:pythonLocation/python.exe"
+
+    - name: Build
+      run: cmake --build build --config Release --parallel 2
+
+    - name: Test Suite
+      run: |
+        $dependencies = "$env:GITHUB_WORKSPACE/build/vcpkg_installed/x64-windows"
+        $env:PATH = "$dependencies/bin;$dependencies/tools/python3;$env:PATH"
+        # The embedded interpreter needs the stdlib matching vcpkg's Python DLL.
+        $env:PYTHONHOME = "$dependencies/tools/python3"
+        ctest --test-dir build -C Release --output-on-failure --no-tests=error
+
+    - name: Upload test logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: windows-msvc-test-logs
+        path: build/Testing/Temporary/
+        if-no-files-found: ignore
+
   macos:
     if: false
     name: MacOS build
@@ -112,13 +187,13 @@ jobs:
 
     - name: Set up SSH
       uses: kielabokkie/ssh-key-and-known-hosts-action@151931a36dd69934d46acc72b38939737db04e6f
-      if: github.event_name == 'push'
+      if: github.event_name == 'push' && github.repository == 'gemrb/gemrb'
       with:
         ssh-private-key: ${{ secrets.SSH_SF_PRIVATE_KEY }}
         ssh-host: frs.sourceforge.net
 
     - name: Upload
-      if: github.event_name == 'push'
+      if: github.event_name == 'push' && github.repository == 'gemrb/gemrb'
       run: |
         # NOTE: only do it on clang builds if we ever add more compilers
         filepath=Apple/OSX
@@ -214,13 +289,13 @@ jobs:
 
     - name: Set up SSH
       uses: kielabokkie/ssh-key-and-known-hosts-action@151931a36dd69934d46acc72b38939737db04e6f
-      if: github.event_name == 'push'
+      if: github.event_name == 'push' && github.repository == 'gemrb/gemrb'
       with:
         ssh-private-key: ${{ secrets.SSH_SF_PRIVATE_KEY }}
         ssh-host: frs.sourceforge.net
 
     - name: Upload
-      if: github.event_name == 'push'
+      if: github.event_name == 'push' && github.repository == 'gemrb/gemrb'
       run: |
         # NOTE: only do it on gcc builds if we ever add more compilers
         filepath=Linux
