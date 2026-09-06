@@ -248,6 +248,12 @@ IF (BUILD_TESTING)
       SET_PROPERTY(TEST Test_GUIScripts_SpellCastCheck APPEND PROPERTY
         ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${directory}")
     ENDFOREACH()
+    IF(_VCPKG_INSTALLED_DIR)
+      # Only the embedded subprocess uses this home: the Python test driver
+      # may intentionally run a different version (for example on AppVeyor).
+      SET_PROPERTY(TEST Test_GUIScripts_SpellCastCheck PROPERTY ENVIRONMENT
+        "GEMRB_TEST_PYTHONHOME=${_VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/tools/python3")
+    ENDIF()
   ENDIF()
 
   ADD_NATIVE_SCRIPT_TEST(Test_Core_ItemTypeSchema test_itemtype_schema.py core/Interface.cpp)

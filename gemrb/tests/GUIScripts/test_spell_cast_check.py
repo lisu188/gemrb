@@ -10,6 +10,7 @@ It is not a replacement for the full engine build or live spell-casting tests.
 """
 
 from pathlib import Path
+import os
 import subprocess
 import unittest
 
@@ -319,7 +320,12 @@ def generate_harness():
 
 class SpellCastCheckTests(unittest.TestCase):
     def scenario(self, name):
-        result = subprocess.run([str(self.binary), name], capture_output=True, text=True, timeout=20)
+        environment = os.environ.copy()
+        python_home = environment.pop("GEMRB_TEST_PYTHONHOME", None)
+        if python_home:
+            environment["PYTHONHOME"] = python_home
+        result = subprocess.run([str(self.binary), name], capture_output=True, text=True,
+                                timeout=20, env=environment)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn(name + " passed", result.stdout)
 

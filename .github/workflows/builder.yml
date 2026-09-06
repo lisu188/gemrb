@@ -124,8 +124,6 @@ jobs:
       run: |
         $dependencies = "$env:GITHUB_WORKSPACE/build/vcpkg_installed/x64-windows"
         $env:PATH = "$dependencies/bin;$dependencies/tools/python3;$env:PATH"
-        # The embedded interpreter needs the stdlib matching vcpkg's Python DLL.
-        $env:PYTHONHOME = "$dependencies/tools/python3"
         ctest --test-dir build -C Release --output-on-failure --no-tests=error
 
     - name: Upload test logs
