@@ -261,6 +261,7 @@ IF (BUILD_TESTING)
   ENDFOREACH()
 
   ADD_NATIVE_SCRIPT_TEST(Test_Core_ItemTypeSchema test_itemtype_schema.py core/Interface.cpp)
+  ADD_NATIVE_SCRIPT_TEST(Test_Core_SavePreview test_save_preview.py core/SaveGameIterator.cpp)
   ADD_NATIVE_SCRIPT_TEST(Test_Core_MonkProgression test_monk_progression.py
     core/GameData.cpp core/Inventory.cpp core/Scriptable/Actor.cpp)
 
