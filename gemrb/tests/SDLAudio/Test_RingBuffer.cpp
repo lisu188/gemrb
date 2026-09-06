@@ -23,7 +23,7 @@ TEST(RingBufferTest, Fill)
 TEST(RingBufferTest, Consume)
 {
 	RingBuffer<char> rb { 5 };
-	std::vector<char> result = { 95, 96, 97, 98, 99 };
+	std::vector<char> result = { 95, 96, 97, 98, 99, 100, 101, 102, 103, 104 };
 
 	rb.Fill(testData.data(), 5);
 	EXPECT_EQ(rb.Consume(result.data(), 0), size_t(0));
@@ -41,6 +41,9 @@ TEST(RingBufferTest, Consume)
 	EXPECT_EQ(result[4], 4);
 
 	EXPECT_EQ(rb.Consume(result.data() + 5, 5), size_t(0));
+	// Even oversized requests must leave the destination tail unchanged.
+	EXPECT_EQ(result[5], 100);
+	EXPECT_EQ(result[9], 104);
 }
 
 TEST(RingBufferTest, FillAndConsume)

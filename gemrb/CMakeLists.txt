@@ -206,11 +206,69 @@ ENDIF(VITA)
 
 # Tests
 IF (BUILD_TESTING)
+  FIND_PACKAGE(Python3 COMPONENTS Interpreter REQUIRED)
+  ADD_TEST(NAME Test_GUIScripts_LevelupSelection
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/GUIScripts/test_levelup_selection.py
+  )
+  ADD_TEST(NAME Test_GUIScripts_PortraitNavigation
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/GUIScripts/test_portrait_navigation.py
+  )
+  ADD_TEST(NAME Test_GUIScripts_ChargenStartup
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/GUIScripts/test_chargen_startup.py
+  )
+  ADD_TEST(NAME Test_GUIScripts_BGEELevelup
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/GUIScripts/test_bgee_levelup.py
+  )
+  # Generate from production bodies, then use the configured compiler and
+  # Python development library rather than compiling from the test interpreter.
+  FUNCTION(ADD_NATIVE_SCRIPT_TEST name script)
+    SET(source "${CMAKE_CURRENT_BINARY_DIR}/tests/${name}.cpp")
+    SET(driver "${CMAKE_CURRENT_SOURCE_DIR}/tests/GUIScripts/${script}")
+    ADD_CUSTOM_COMMAND(OUTPUT "${source}"
+      COMMAND ${Python3_EXECUTABLE} "${driver}" --generate "${source}"
+      DEPENDS "${driver}" tests/GUIScripts/native_harness.py ${ARGN}
+      VERBATIM
+    )
+    ADD_EXECUTABLE(${name}_Harness "${source}")
+    TARGET_COMPILE_FEATURES(${name}_Harness PRIVATE cxx_std_17)
+    TARGET_COMPILE_OPTIONS(${name}_Harness PRIVATE
+      $<IF:$<CXX_COMPILER_ID:MSVC>,/UNDEBUG,-UNDEBUG>)
+    ADD_TEST(NAME ${name}
+      COMMAND ${Python3_EXECUTABLE} "${driver}" --binary $<TARGET_FILE:${name}_Harness>
+    )
+  ENDFUNCTION()
+
+  ADD_NATIVE_SCRIPT_TEST(Test_GUIScripts_SpellCastCheck test_spell_cast_check.py
+    core/GUI/GameControl.cpp plugins/GUIScript/GUIScript.cpp plugins/GUIScript/PythonCallbacks.h)
+  ADD_NATIVE_SCRIPT_TEST(Test_GUIScripts_SaveGame test_save_game.py plugins/GUIScript/GUIScript.cpp)
+  FOREACH(name Test_GUIScripts_SpellCastCheck Test_GUIScripts_SaveGame)
+    TARGET_INCLUDE_DIRECTORIES(${name}_Harness SYSTEM PRIVATE ${PYTHON_INCLUDE_DIRS})
+    TARGET_LINK_LIBRARIES(${name}_Harness PRIVATE
+      ${PYTHON_LIBRARIES} Threads::Threads ${CMAKE_DL_LIBS})
+    IF(WIN32)
+      FOREACH(directory IN LISTS PYTHON_RUNTIME_LIBRARY_DIRS)
+        SET_PROPERTY(TEST ${name} APPEND PROPERTY
+          ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${directory}")
+      ENDFOREACH()
+      IF(_VCPKG_INSTALLED_DIR)
+        # Only the embedded subprocess uses this home: the Python test driver
+        # may intentionally run a different version (for example on AppVeyor).
+        SET_PROPERTY(TEST ${name} PROPERTY ENVIRONMENT
+          "GEMRB_TEST_PYTHONHOME=${_VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/tools/python3")
+      ENDIF()
+    ENDIF()
+  ENDFOREACH()
+
+  ADD_NATIVE_SCRIPT_TEST(Test_Core_ItemTypeSchema test_itemtype_schema.py core/Interface.cpp)
+  ADD_NATIVE_SCRIPT_TEST(Test_Core_MonkProgression test_monk_progression.py
+    core/GameData.cpp core/Inventory.cpp core/Scriptable/Actor.cpp)
+
   ADD_EXECUTABLE(Test_gemrb_core
     tests/core/Test_Map.cpp
     tests/core/Test_MurmurHash.cpp
     tests/core/Test_Orient.cpp
     tests/core/Test_Palette.cpp
+    tests/core/GUI/Test_Font.cpp
     tests/core/Test_SaveGame.cpp
     tests/core/Streams/Test_DataStream.cpp
     tests/core/Strings/Test_CString.cpp

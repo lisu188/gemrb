@@ -1305,6 +1305,9 @@ int Inventory::GetEquippedSlot() const
 bool Inventory::SetEquippedSlot(ieWordSigned slotcode, ieWord header, bool noFX)
 {
 	EquippedHeader = header;
+	// Empty quickweapon buttons can refer directly to the fist inventory slot.
+	// Keep the unarmed sentinel so Monk APR and other fist checks still apply.
+	if (GetWeaponSlot(slotcode) == SLOT_FIST) slotcode = IW_NO_EQUIPPED;
 
 	//doesn't work if magic slot is used, refresh the magic slot just in case
 	if (MagicSlotEquipped() && (slotcode != SLOT_MAGIC - SLOT_MELEE)) {

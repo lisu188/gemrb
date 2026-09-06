@@ -850,7 +850,8 @@ int GameData::GetMonkBonus(int bonusType, int level, const Actor* actor)
 		static int cols = monkBon->GetColumnCount();
 		if (level >= cols) level = cols;
 
-		return monkBon->QueryFieldSigned<int>(bonusType, level - 1);
+		auto row = bonusType == 1 ? monkBon->GetRowIndex("AC_BONUS") : monkBon->GetRowIndex("ACM_BONUS");
+		return monkBon->QueryFieldSigned<int>(row, level - 1);
 	}
 }
 
