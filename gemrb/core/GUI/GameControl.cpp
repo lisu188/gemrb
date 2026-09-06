@@ -1909,6 +1909,7 @@ void GameControl::TryToCast(Actor* source, const Point& tgt)
 	}
 	if (spellOrItem >= 0 && !CheckSpellCast(source, action->resref0Parameter)) {
 		ResetTargetMode();
+		delete action;
 		return;
 	}
 	source->AddAction(action);
@@ -1983,6 +1984,7 @@ void GameControl::TryToCast(Actor* source, const Actor* tgt)
 	}
 	if (spellOrItem >= 0 && !CheckSpellCast(source, action->resref0Parameter)) {
 		ResetTargetMode();
+		delete action;
 		return;
 	}
 	source->AddAction(action);

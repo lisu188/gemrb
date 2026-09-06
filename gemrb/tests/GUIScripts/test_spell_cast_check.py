@@ -10,12 +10,10 @@ It is not a replacement for the full engine build or live spell-casting tests.
 """
 
 from pathlib import Path
-import os
-import shlex
 import subprocess
-import sysconfig
-import tempfile
 import unittest
+
+from native_harness import run_tests
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -58,6 +56,9 @@ namespace fmt { struct WideToChar { String value; }; }
 template<class... T> void Log(T...) {}
 struct Point { int x=0, y=0; };
 struct Action {
+    inline static int live = 0;
+    Action() { ++live; }
+    ~Action() { --live; }
     ResRef resref0Parameter;
     Point pointParameter;
     int int0Parameter=0, int1Parameter=0, int2Parameter=0;
@@ -92,10 +93,10 @@ struct Actor {
     unsigned int GetGlobalID() const { return 4242; }
     bool Untargetable(const ResRef&, const Actor*) const { return untargetable; }
     void Stop() {}
-    void AddAction(Holder<Action> action) { actions.push_back(std::move(action)); }
+    void AddAction(Action* action) { actions.emplace_back(action); }
 };
-Holder<Action> GenerateAction(std::string) { return std::make_shared<Action>(); }
-Holder<Action> GenerateActionDirect(std::string, const Actor*) { return std::make_shared<Action>(); }
+static Action* GenerateAction(std::string) { return new Action; }
+static Action* GenerateActionDirect(std::string, const Actor*) { return new Action; }
 struct Display {
     void DisplayConstantStringName(int, int, Actor*) {}
 } displayStorage;
@@ -134,7 +135,7 @@ Core* core=&coreStorage;
 #define GET_GAME()
 #define GET_ACTOR_GLOBAL() Actor* actor=&caster
 #define GET_GAMECONTROL() GameControl* gc=&control
-PyObject* RuntimeError(const char* message) {
+static PyObject* RuntimeError(const char* message) {
     PyErr_SetString(PyExc_RuntimeError, message);
     return nullptr;
 }
@@ -143,19 +144,19 @@ PyObject* RuntimeError(const char* message) {
 
 SCENARIOS = r'''
 PyObject* globals;
-void runPython(const char* code) {
+static void runPython(const char* code) {
     PyObject* result=PyRun_String(code, Py_file_input, globals, globals);
     if (!result) PyErr_Print();
     assert(result); Py_DECREF(result);
 }
-void install(const char* body) {
+static void install(const char* body) {
     runPython(body);
     PyObject* args=PyTuple_Pack(1, PyDict_GetItemString(globals, "check"));
     PyObject* result=GemRB_SetSpellCastCheck(nullptr, args);
     assert(result); Py_DECREF(result); Py_DECREF(args);
 }
-int calls() { return PyList_Size(PyDict_GetItemString(globals, "events")); }
-void cast(int target, int type=1) {
+static int calls() { return PyList_Size(PyDict_GetItemString(globals, "events")); }
+static void cast(int target, int type=1) {
     caster.spellbook.info.Target=target;
     PyObject* args=type==-3 ? Py_BuildValue("(iiis)",1,type,0,"variant") : Py_BuildValue("(iii)", 1, type, 0);
     PyObject* result=GemRB_SpellCast(nullptr, args);
@@ -163,7 +164,7 @@ void cast(int target, int type=1) {
 }
 const char* allow="events=[]\ndef check(actor, spell):\n events.append((actor,spell)); return True\n";
 const char* veto="events=[]\ndef check(actor, spell):\n events.append((actor,spell)); return False\n";
-void checkEvents(const char* expected) {
+static void checkEvents(const char* expected) {
     PyObject* result=PyRun_String(expected, Py_eval_input, globals, globals);
     assert(result && PyObject_IsTrue(result)); Py_DECREF(result);
 }
@@ -279,6 +280,8 @@ int main(int argc, char** argv) {
         assert(GemRB_SetSpellCastCheck(nullptr,args)==nullptr && PyErr_Occurred());
         Py_DECREF(args); PyErr_Clear();
     } else { assert(false); }
+    caster.actions.clear();
+    assert(Action::live == 0); // vetoes and invalid targets must release unqueued actions
     control.SetSpellCastCheck(nullptr); // release Python state before finalization
     Py_Finalize();
     std::cout << test << " passed\n";
@@ -286,52 +289,35 @@ int main(int argc, char** argv) {
 '''
 
 
-class SpellCastCheckTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        game_control = (ROOT / "core/GUI/GameControl.cpp").read_text()
-        gui_script = (ROOT / "plugins/GUIScript/GUIScript.cpp").read_text()
-        callbacks = (ROOT / "plugins/GUIScript/PythonCallbacks.h").read_text()
-        pieces = [BOUNDARIES]
-        # Keep the production CPython ownership/error handling, not a fake callback.
-        pieces.append(callbacks[callbacks.index("template<typename R>"):callbacks.index("template<class R, class ARG_T>")])
-        for signature in (
-            "void GameControl::SetSpellCastCheck(",
-            "bool GameControl::CheckSpellCast(",
-            "void GameControl::ResetTargetMode(",
-            "void GameControl::TryToCast(Actor* source, const Point&",
-            "void GameControl::TryToCast(Actor* source, const Actor*",
-        ):
-            pieces.append(function(game_control, signature))
-        # Compile the exact ground-cast branch of the real input dispatcher.
-        # Actor lookup and unrelated door/travel branches remain boundaries;
-        # cancellation must be proved by this mode guard, not a fake count reset.
-        dispatch = function(game_control, "void GameControl::PerformSelectedAction(")
-        ground_cast = function(dispatch, "if (targetMode == TargetMode::Cast && !(gamedata->GetSpecialSpell")
-        pieces.append("void GameControl::DispatchGround(Actor* selectedActor, const Point& p) {\n" + ground_cast + "\n}")
-        pieces.append(function(gui_script, "struct PythonSpellCastCheck") + ";")
-        pieces.append(function(gui_script, "static PyObject* GemRB_SetSpellCastCheck("))
-        pieces.append(function(gui_script, "static PyObject* GemRB_SpellCast("))
-        pieces.append(SCENARIOS)
-        cls.temp = tempfile.TemporaryDirectory(prefix="gemrb-cast-check-")
-        cls.addClassCleanup(cls.temp.cleanup)
-        source = Path(cls.temp.name) / "cast.cpp"
-        source.write_text("\n".join(pieces))
-        cls.binary = source.with_suffix("")
-        library = sysconfig.get_config_var("LDLIBRARY")
-        libname = library.removeprefix("lib").split(".so")[0].split(".a")[0].split(".dylib")[0]
-        command = shlex.split(os.environ.get("CXX", "c++")) + [
-            "-std=c++17", "-O0", "-g", "-UNDEBUG",
-            "-I" + sysconfig.get_path("include"), str(source),
-            "-L" + sysconfig.get_config_var("LIBDIR"), "-l" + libname,
-            *shlex.split(sysconfig.get_config_var("LIBS") or ""),
-            *shlex.split(sysconfig.get_config_var("SYSLIBS") or ""),
-            "-o", str(cls.binary),
-        ]
-        result = subprocess.run(command, capture_output=True, text=True, timeout=60)
-        if result.returncode:
-            raise AssertionError(result.stdout + result.stderr)
+def generate_harness():
+    game_control = (ROOT / "core/GUI/GameControl.cpp").read_text()
+    gui_script = (ROOT / "plugins/GUIScript/GUIScript.cpp").read_text()
+    callbacks = (ROOT / "plugins/GUIScript/PythonCallbacks.h").read_text()
+    pieces = [BOUNDARIES]
+    # Keep the production CPython ownership/error handling, not a fake callback.
+    pieces.append(callbacks[callbacks.index("template<typename R>"):callbacks.index("template<class R, class ARG_T>")])
+    for signature in (
+        "void GameControl::SetSpellCastCheck(",
+        "bool GameControl::CheckSpellCast(",
+        "void GameControl::ResetTargetMode(",
+        "void GameControl::TryToCast(Actor* source, const Point&",
+        "void GameControl::TryToCast(Actor* source, const Actor*",
+    ):
+        pieces.append(function(game_control, signature))
+    # Compile the exact ground-cast branch of the real input dispatcher.
+    # Actor lookup and unrelated door/travel branches remain boundaries;
+    # cancellation must be proved by this mode guard, not a fake count reset.
+    dispatch = function(game_control, "void GameControl::PerformSelectedAction(")
+    ground_cast = function(dispatch, "if (targetMode == TargetMode::Cast && !(gamedata->GetSpecialSpell")
+    pieces.append("void GameControl::DispatchGround(Actor* selectedActor, const Point& p) {\n" + ground_cast + "\n}")
+    pieces.append(function(gui_script, "struct PythonSpellCastCheck") + ";")
+    pieces.append(function(gui_script, "static PyObject* GemRB_SetSpellCastCheck("))
+    pieces.append(function(gui_script, "static PyObject* GemRB_SpellCast("))
+    pieces.append(SCENARIOS)
+    return "\n".join(pieces)
 
+
+class SpellCastCheckTests(unittest.TestCase):
     def scenario(self, name):
         result = subprocess.run([str(self.binary), name], capture_output=True, text=True, timeout=20)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -350,4 +336,4 @@ class SpellCastCheckTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    run_tests(SpellCastCheckTests, generate_harness)

@@ -219,12 +219,38 @@ IF (BUILD_TESTING)
   ADD_TEST(NAME Test_GUIScripts_BGEELevelup
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/GUIScripts/test_bgee_levelup.py
   )
-  ADD_TEST(NAME Test_GUIScripts_SpellCastCheck
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/GUIScripts/test_spell_cast_check.py
-  )
-  ADD_TEST(NAME Test_Core_ItemTypeSchema
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/GUIScripts/test_itemtype_schema.py
-  )
+  # Generate from production bodies, then use the configured compiler and
+  # Python development library rather than compiling from the test interpreter.
+  FUNCTION(ADD_NATIVE_SCRIPT_TEST name script)
+    SET(source "${CMAKE_CURRENT_BINARY_DIR}/tests/${name}.cpp")
+    SET(driver "${CMAKE_CURRENT_SOURCE_DIR}/tests/GUIScripts/${script}")
+    ADD_CUSTOM_COMMAND(OUTPUT "${source}"
+      COMMAND ${Python3_EXECUTABLE} "${driver}" --generate "${source}"
+      DEPENDS "${driver}" tests/GUIScripts/native_harness.py ${ARGN}
+      VERBATIM
+    )
+    ADD_EXECUTABLE(${name}_Harness "${source}")
+    TARGET_COMPILE_FEATURES(${name}_Harness PRIVATE cxx_std_17)
+    TARGET_COMPILE_OPTIONS(${name}_Harness PRIVATE
+      $<IF:$<CXX_COMPILER_ID:MSVC>,/UNDEBUG,-UNDEBUG>)
+    ADD_TEST(NAME ${name}
+      COMMAND ${Python3_EXECUTABLE} "${driver}" --binary $<TARGET_FILE:${name}_Harness>
+    )
+  ENDFUNCTION()
+
+  ADD_NATIVE_SCRIPT_TEST(Test_GUIScripts_SpellCastCheck test_spell_cast_check.py
+    core/GUI/GameControl.cpp plugins/GUIScript/GUIScript.cpp plugins/GUIScript/PythonCallbacks.h)
+  TARGET_INCLUDE_DIRECTORIES(Test_GUIScripts_SpellCastCheck_Harness SYSTEM PRIVATE ${PYTHON_INCLUDE_DIRS})
+  TARGET_LINK_LIBRARIES(Test_GUIScripts_SpellCastCheck_Harness PRIVATE
+    ${PYTHON_LIBRARIES} Threads::Threads ${CMAKE_DL_LIBS})
+  IF(WIN32)
+    FOREACH(directory IN LISTS PYTHON_RUNTIME_LIBRARY_DIRS)
+      SET_PROPERTY(TEST Test_GUIScripts_SpellCastCheck APPEND PROPERTY
+        ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${directory}")
+    ENDFOREACH()
+  ENDIF()
+
+  ADD_NATIVE_SCRIPT_TEST(Test_Core_ItemTypeSchema test_itemtype_schema.py core/Interface.cpp)
 
   ADD_EXECUTABLE(Test_gemrb_core
     tests/core/Test_Map.cpp

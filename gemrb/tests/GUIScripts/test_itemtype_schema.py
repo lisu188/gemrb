@@ -10,11 +10,10 @@ usability or the inventory UI and is not a replacement for a full engine build.
 """
 
 from pathlib import Path
-import os
-import shlex
 import subprocess
-import tempfile
 import unittest
+
+from native_harness import run_tests
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -46,7 +45,7 @@ struct TableMgr {
 };
 using AutoTable = std::shared_ptr<TableMgr>;
 constexpr unsigned SLOT_INVENTORY = 32768;
-void ThrowException(const std::string& text) { throw std::runtime_error(text); }
+static void ThrowException(const std::string& text) { throw std::runtime_error(text); }
 struct GameData {
     AutoTable primary, fallback;
     int fallbacks = 0;
@@ -63,7 +62,7 @@ struct Interface {
     std::vector<unsigned> slotmatrix;
     void InitItemTypes();
 };
-AutoTable readTable(const std::string& path) {
+static AutoTable readTable(const std::string& path) {
     std::ifstream input(path);
     if (!input) throw std::runtime_error("cannot read GemRB baseline");
     auto table = std::make_shared<TableMgr>();
@@ -121,25 +120,18 @@ int main(int argc, char** argv) {
 '''
 
 
+def generate_harness():
+    source = (ROOT / 'core/Interface.cpp').read_text()
+    start = source.index('void Interface::InitItemTypes()')
+    end = source.index('\t//itemtype data stores', start)
+    # Keep the actual table selection and bit-matrix conversion verbatim;
+    # the remaining function initializes separate armor/slot metadata.
+    actual = source[start:end] + '}\n'
+    return BOUNDARIES + actual + MAIN
+
+
 class ItemTypeSchemaTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.temp = tempfile.TemporaryDirectory(prefix='gemrb-itemtype-test-')
-        cls.addClassCleanup(cls.temp.cleanup)
-        directory = Path(cls.temp.name)
-        source = (ROOT / 'core/Interface.cpp').read_text()
-        start = source.index('void Interface::InitItemTypes()')
-        end = source.index('\t//itemtype data stores', start)
-        # Keep the actual table selection and bit-matrix conversion verbatim;
-        # the remaining function initializes separate armor/slot metadata.
-        actual = source[start:end] + '}\n'
-        generated = directory / 'itemtype.cpp'
-        generated.write_text(BOUNDARIES + actual + MAIN)
-        cls.binary = directory / 'itemtype'
-        cls.baseline = ROOT / 'unhardcoded/shared/gitemtyp.2da'
-        command = shlex.split(os.environ.get('CXX', 'c++'))
-        subprocess.run(command + ['-std=c++17', '-Wall', '-Wextra', str(generated),
-                                  '-o', str(cls.binary)], check=True, capture_output=True, text=True)
+    baseline = ROOT / 'unhardcoded/shared/gitemtyp.2da'
 
     def run_case(self, family, schema, expected=None, error=None):
         result = subprocess.run([str(self.binary), family, schema, str(self.baseline)],
@@ -195,4 +187,4 @@ class ItemTypeSchemaTests(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    unittest.main()
+    run_tests(ItemTypeSchemaTests, generate_harness)
