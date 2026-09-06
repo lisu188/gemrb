@@ -467,6 +467,11 @@ bool MakeDirectories(const path_t& path)
 
 	for (const auto& part : parts) {
 		if (part.empty()) continue;
+#ifdef WIN32
+		// A drive prefix is not a directory to create. _wmkdir("C:") can
+		// fail even when the absolute path below that drive is writable.
+		if (part.begin() == begin && part.length() == 2 && part[1] == ':') continue;
+#endif
 
 		const char* end = part.begin() + part.length();
 		if (!MakeDirectory(StringView(begin, end - begin))) {
