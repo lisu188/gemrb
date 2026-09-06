@@ -74,9 +74,9 @@ def OpenHLAWindow (actor, numclasses, classes, levels):
 		# setup extra 25th HLA slot:
 		if not HLAWindow.GetControl (24):
 			HLAWindow.CreateButton (24, 231, 345, 42, 42)
-		if ( len (HLAAbilities) > 25):
+		if (len (HLAAbilities) > 25):
 			# setup scrollbar
-			ScrollBar = HLAWindow.CreateScrollBar (1000, {'x' : 290, 'y' : 142, 'w' : 16, 'h' : 252}, "GUISCRCW")
+			ScrollBar = HLAWindow.CreateScrollBar (1000, {'x': 290, 'y': 142, 'w': 16, 'h': 252}, "GUISCRCW")
 			ScrollBar.OnChange (HLAShowAbilities)
 			#with enhanced GUI we have 5 rows of 5 abilities (the last one is 'the extra slot')
 			count = GUICommon.ceildiv (len(HLAAbilities) - 25, 5) + 1
