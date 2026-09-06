@@ -80,6 +80,8 @@ jobs:
         # vcpkg 2026.07.29 (the 2022 bootstrap downloads a removed 7-Zip archive).
         ref: 9e593bb18ea69cc5095e012465dcd675a822ed0d
         path: vcpkg
+        # Historical pinned port trees are needed by manifest versioning.
+        fetch-depth: 0
 
     - name: Set up Python
       uses: actions/setup-python@v6
