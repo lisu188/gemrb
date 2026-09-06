@@ -4342,7 +4342,7 @@ static PyObject* GemRB_SaveGame(PyObject* /*self*/, PyObject* args)
 	}
 
 	Holder<Sprite2D> areaPic;
-	if (preview != Py_None) {
+	if (preview && preview != Py_None) {
 		areaPic = SpriteFromPy(preview);
 	}
 

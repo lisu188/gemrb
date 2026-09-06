@@ -240,23 +240,28 @@ IF (BUILD_TESTING)
 
   ADD_NATIVE_SCRIPT_TEST(Test_GUIScripts_SpellCastCheck test_spell_cast_check.py
     core/GUI/GameControl.cpp plugins/GUIScript/GUIScript.cpp plugins/GUIScript/PythonCallbacks.h)
-  TARGET_INCLUDE_DIRECTORIES(Test_GUIScripts_SpellCastCheck_Harness SYSTEM PRIVATE ${PYTHON_INCLUDE_DIRS})
-  TARGET_LINK_LIBRARIES(Test_GUIScripts_SpellCastCheck_Harness PRIVATE
-    ${PYTHON_LIBRARIES} Threads::Threads ${CMAKE_DL_LIBS})
-  IF(WIN32)
-    FOREACH(directory IN LISTS PYTHON_RUNTIME_LIBRARY_DIRS)
-      SET_PROPERTY(TEST Test_GUIScripts_SpellCastCheck APPEND PROPERTY
-        ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${directory}")
-    ENDFOREACH()
-    IF(_VCPKG_INSTALLED_DIR)
-      # Only the embedded subprocess uses this home: the Python test driver
-      # may intentionally run a different version (for example on AppVeyor).
-      SET_PROPERTY(TEST Test_GUIScripts_SpellCastCheck PROPERTY ENVIRONMENT
-        "GEMRB_TEST_PYTHONHOME=${_VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/tools/python3")
+  ADD_NATIVE_SCRIPT_TEST(Test_GUIScripts_SaveGame test_save_game.py plugins/GUIScript/GUIScript.cpp)
+  FOREACH(name Test_GUIScripts_SpellCastCheck Test_GUIScripts_SaveGame)
+    TARGET_INCLUDE_DIRECTORIES(${name}_Harness SYSTEM PRIVATE ${PYTHON_INCLUDE_DIRS})
+    TARGET_LINK_LIBRARIES(${name}_Harness PRIVATE
+      ${PYTHON_LIBRARIES} Threads::Threads ${CMAKE_DL_LIBS})
+    IF(WIN32)
+      FOREACH(directory IN LISTS PYTHON_RUNTIME_LIBRARY_DIRS)
+        SET_PROPERTY(TEST ${name} APPEND PROPERTY
+          ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${directory}")
+      ENDFOREACH()
+      IF(_VCPKG_INSTALLED_DIR)
+        # Only the embedded subprocess uses this home: the Python test driver
+        # may intentionally run a different version (for example on AppVeyor).
+        SET_PROPERTY(TEST ${name} PROPERTY ENVIRONMENT
+          "GEMRB_TEST_PYTHONHOME=${_VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/tools/python3")
+      ENDIF()
     ENDIF()
-  ENDIF()
+  ENDFOREACH()
 
   ADD_NATIVE_SCRIPT_TEST(Test_Core_ItemTypeSchema test_itemtype_schema.py core/Interface.cpp)
+  ADD_NATIVE_SCRIPT_TEST(Test_Core_MonkProgression test_monk_progression.py
+    core/GameData.cpp core/Inventory.cpp core/Scriptable/Actor.cpp)
 
   ADD_EXECUTABLE(Test_gemrb_core
     tests/core/Test_Map.cpp

@@ -10061,6 +10061,8 @@ void Actor::SetupFist()
 	const CREItem* currentFist = inventory.GetSlotItem(slot);
 	if (!currentFist || currentFist->ItemResRef != ItemResRef) {
 		inventory.SetSlotItemRes(ItemResRef, slot);
+		// Replacing the item invalidates the cached weapon pointer and header.
+		inventory.CacheAllWeaponInfo();
 	}
 }
 
