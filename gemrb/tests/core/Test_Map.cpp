@@ -50,6 +50,8 @@ public:
 		core->SetGame(nullptr);
 		VideoDriver.reset();
 		gemrb.reset();
+		// Later filesystem tests consult this non-owning engine observer.
+		core = nullptr;
 		PluginMgr::Get()->RunCleanup();
 	}
 };

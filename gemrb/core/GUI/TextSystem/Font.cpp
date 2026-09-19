@@ -227,13 +227,16 @@ void Font::CreateAliasForChar(ieWord chr, ieWord alias)
 	Atlas[pageIdx]->MapSheetSegment(alias, (*Atlas[pageIdx])[chr]);
 }
 
+const Glyph* Font::FindGlyph(ieWord chr) const
+{
+	return chr < AtlasIndex.size() ? AtlasIndex[chr].glyph : nullptr;
+}
+
 const Glyph& Font::GetGlyph(ieWord chr) const
 {
-	if (chr < AtlasIndex.size()) {
-		const Glyph* g = AtlasIndex[chr].glyph;
-		if (g) {
-			return *g;
-		}
+	const Glyph* g = FindGlyph(chr);
+	if (g) {
+		return *g;
 	}
 	const static Glyph blank(Size(0, 0), Point(0, 0), NULL, 0, 1);
 	return blank;
