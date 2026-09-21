@@ -1,0 +1,49 @@
+name: Companion integration bootstrap
+on:
+  push:
+    branches: [feat/persistent-companion]
+    paths: [.github/workflows/companion-bootstrap.yml]
+permissions:
+  contents: write
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Integrate binding and native CTest
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          p = Path('gemrb/plugins/GUIScript/GUIScript.cpp')
+          assert hashlib.sha256(p.read_bytes()).hexdigest() == 'cac720252cf9469072ce66a3a2f94670c6c17db2a84d289ff76d2a1dbc2d737f'
+          s = p.read_text()
+          s = s.replace('static PyMethodDef GemRBMethods[]', '#include "CompanionBindings.h"\n\nstatic PyMethodDef GemRBMethods[]', 1)
+          s = s.replace('METHOD(CreateCreature, METH_VARARGS),', 'METHOD(CreateCreature, METH_VARARGS),\n\tMETHOD(ManageCompanion, METH_VARARGS),', 1)
+          p.write_text(s)
+          p = Path('gemrb/CMakeLists.txt')
+          assert hashlib.sha256(p.read_bytes()).hexdigest() == '1b39324578f97eacd12aa0edc9e091a20d0e6b678d31fa362194f61708ca23f0'
+          s = p.read_text().replace('  FOREACH(name Test_GUIScripts_SpellCastCheck Test_GUIScripts_SaveGame)', '  ADD_NATIVE_SCRIPT_TEST(Test_GUIScripts_Companion test_companion.py plugins/GUIScript/CompanionBindings.h)\n  FOREACH(name Test_GUIScripts_SpellCastCheck Test_GUIScripts_SaveGame Test_GUIScripts_Companion)', 1)
+          p.write_text(s)
+          PY
+          clang-format -i gemrb/plugins/GUIScript/CompanionBindings.h
+      - name: Validate actual binding algorithm before publishing integration
+        run: |
+          python3 gemrb/tests/GUIScripts/test_companion.py --generate /tmp/companion.cpp
+          c++ -std=c++17 -Wall -Wextra -Werror /tmp/companion.cpp $(python3-config --includes --embed --ldflags) -o /tmp/companion
+          python3 gemrb/tests/GUIScripts/test_companion.py --binary /tmp/companion
+          git diff --check
+      - name: Publish integration on isolated branch
+        run: |
+          test "$GITHUB_REF" = refs/heads/feat/persistent-companion
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add gemrb/plugins/GUIScript/GUIScript.cpp gemrb/plugins/GUIScript/CompanionBindings.h gemrb/CMakeLists.txt
+          git commit -m 'Expose saved companion lifecycle and register native regression tests'
+          git push origin HEAD:refs/heads/feat/persistent-companion
+          git archive --format=tar HEAD > /tmp/companion-engine.tar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: companion-engine-source
+          path: /tmp/companion-engine.tar
+          retention-days: 7
