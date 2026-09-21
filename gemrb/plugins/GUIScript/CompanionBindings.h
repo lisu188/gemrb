@@ -10,6 +10,7 @@ static void RetireCompanion(Game* game, Actor* companion)
 	game->DelNPC(game->InStore(companion));
 	companion->SetPersistent(-1);
 	companion->SetScriptName(ieVariable());
+	companion->ignoredFields.origScriptName.Reset();
 	if (companion->GetCurrentArea()) {
 		companion->DestroySelf();
 	} else {
@@ -95,6 +96,7 @@ static PyObject* GemRB_ManageCompanion(PyObject* /*self*/, PyObject* args)
 				actor->locals[key] = token;
 			}
 			fresh->SetScriptName(name);
+			fresh->ignoredFields.origScriptName = name;
 			fresh->locals["GMC_TOKEN"] = token;
 			fresh->SetBase(IE_EA, EA_CONTROLLED);
 			fresh->SetBase(IE_XPVALUE, 0);

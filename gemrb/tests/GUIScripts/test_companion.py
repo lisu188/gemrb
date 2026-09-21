@@ -30,6 +30,7 @@ struct ResRef : std::string {
 };
 struct ieVariable : std::string {
     using std::string::string;
+    void Reset() { clear(); }
     void Format(const char*, const ResRef& r) { assign("GMC_" + r); }
     void Format(const char*, const ResRef& r, unsigned t) {
         std::ostringstream s; s << "gmc" << r << std::hex << std::setw(8) << std::setfill('0') << t; assign(s.str());
@@ -46,6 +47,7 @@ struct Actor {
     std::map<std::string, unsigned> locals;
     std::map<int, unsigned> stats{{IE_HITPOINTS,10}};
     ieVariable name;
+    struct { ieVariable origScriptName; } ignoredFields;
     Map* area=nullptr;
     Point Pos;
     struct { unsigned LastSummoner=0; } objects;
@@ -140,7 +142,7 @@ int main(int argc,char** argv) {
         r=invoke(2,"pscrbody",2); assert(r==Py_None); Py_DECREF(r); assert(storage.npcs.size()==1);
     } else if(test=="reload") {
         PyObject* r=invoke(1,"pscrbody",1); Py_DECREF(r); auto* a=storage.npcs.at(0);
-        a->id=9009; owner.id=8008; a->objects.LastSummoner=0;
+        a->id=9009; owner.id=8008; a->objects.LastSummoner=0; a->name=a->ignoredFields.origScriptName;
         r=invoke(1,"pscrbody",3); assert(actorId(r)==9009); Py_DECREF(r);
         assert(a->objects.LastSummoner==8008 && storage.npcs.size()==1);
     } else if(test=="transition") {
