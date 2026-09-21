@@ -17,7 +17,7 @@ import os
 import traceback
 from pathlib import Path
 from GUIDefines import SELECT_REPLACE
-from ie_stats import IE_HITPOINTS, IE_MAXHITPOINTS
+from ie_stats import IE_HITPOINTS, IE_MAXHITPOINTS, IE_MC_FLAGS
 
 report_path = Path(os.environ["GEMRB_COMPANION_REPORT"])
 phase = 0
@@ -48,8 +48,12 @@ def run():
             assert first["Created"] and second["Created"]
             assert first["ActorID"] != second["ActorID"]
             for row, hp in ((first, 3), (second, 7)):
-                GemRB.SetPlayerStat(row["ActorID"], IE_MAXHITPOINTS, 10)
-                GemRB.SetPlayerStat(row["ActorID"], IE_HITPOINTS, hp)
+                body = row["ActorID"]
+                # Demo rabbits have MC_HIDE_HP, for which GetPlayerStat returns '?'.
+                GemRB.SetPlayerStat(body, IE_MC_FLAGS, GemRB.GetPlayerStat(body, IE_MC_FLAGS, 1) & ~0x1000)
+                GemRB.SetPlayerStat(body, IE_MAXHITPOINTS, 10)
+                GemRB.SetPlayerStat(body, IE_HITPOINTS, hp)
+                assert GemRB.GetPlayerStat(body, IE_HITPOINTS) == hp, ("fixture HP", body, GemRB.GetPlayerStat(body, IE_HITPOINTS), hp)
             expected["names"] = [GemRB.GetPlayerName(row["ActorID"], 2) for row in (first, second)]
             recalled = GemRB.ManageCompanion(1, "rabbit", 1)
             assert recalled["ActorID"] == first["ActorID"] and not recalled["Created"]
@@ -58,7 +62,6 @@ def run():
             GemRB.MoveToArea("ar0110")
             assert not GemRB.ManageCompanion(1, "rabbit", 0)["InArea"]
             assert GemRB.ManageCompanion(1, "rabbit", 3)["InArea"]
-            expected["first_save"] = True
             phase = 1
             reload_save("Companion Roundtrip A")
         elif phase == 1:
