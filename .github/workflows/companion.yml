@@ -1,0 +1,53 @@
+name: Companion acceptance
+
+on:
+  push:
+    branches: [master, feat/persistent-companion]
+    paths:
+      - 'gemrb/plugins/GUIScript/**'
+      - 'gemrb/core/**'
+      - 'gemrb/tests/GUIScripts/*companion*'
+      - 'gemrb/CMakeLists.txt'
+      - '.github/workflows/companion.yml'
+  pull_request:
+    branches: [master]
+    paths:
+      - 'gemrb/plugins/GUIScript/**'
+      - 'gemrb/core/**'
+      - 'gemrb/tests/GUIScripts/*companion*'
+      - 'gemrb/CMakeLists.txt'
+      - '.github/workflows/companion.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  acceptance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zlib1g-dev libsdl2-dev libopenal-dev libsdl2-mixer-dev libfreetype6-dev libpng-dev libvorbis-dev python3-dev libgtest-dev xvfb
+      - name: Build engine and all native tests
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUSE_TESTS=ON
+          cmake --build build --parallel 2
+      - name: Run CTest
+        run: xvfb-run -a ctest --test-dir build --output-on-failure --no-tests=error
+      - name: Run actual companion save and reload
+        run: |
+          xvfb-run -a python3 gemrb/tests/GUIScripts/companion_demo.py --engine . --binary build/gemrb/gemrb --plugins build/gemrb/plugins --output "$RUNNER_TEMP/companion-live"
+      - name: Collect validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: companion-acceptance-${{ github.sha }}
+          path: |
+            build/Testing/Temporary/
+            ${{ runner.temp }}/companion-live/engine.log
+            ${{ runner.temp }}/companion-live/companion-report.json
+          if-no-files-found: ignore
+          retention-days: 14
