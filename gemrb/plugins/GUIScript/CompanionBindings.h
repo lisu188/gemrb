@@ -18,13 +18,13 @@ static void RetireCompanion(Game* game, Actor* companion)
 }
 
 PyDoc_STRVAR(GemRB_ManageCompanion__doc,
-	"ManageCompanion(ownerID, creature, mode=0) -> dict or None.\n"
-	"Modes: 0 inspect; 1 summon or recall; 2 dismiss; 3 synchronize existing.\n"
-	"Ownership is saved in namespaced actor locals and a game counter, never a party slot.\n"
-	"Existing living actors retain HP, effects and inventory. Mode 1 replaces dead actors.\n"
-	"Mode 3 rebinds the summoner and moves a living companion only across areas.\n"
-	"Returns ActorID, Alive, Created and InArea. No familiar state is used.\n"
-	"The caller owns class eligibility, resource costs and initial creature statistics.");
+	     "ManageCompanion(ownerID, creature, mode=0) -> dict or None.\n"
+	     "Modes: 0 inspect; 1 summon or recall; 2 dismiss; 3 synchronize existing.\n"
+	     "Ownership is saved in namespaced actor locals and a game counter, never a party slot.\n"
+	     "Existing living actors retain HP, effects and inventory. Mode 1 replaces dead actors.\n"
+	     "Mode 3 rebinds the summoner and moves a living companion only across areas.\n"
+	     "Returns ActorID, Alive, Created and InArea. No familiar state is used.\n"
+	     "The caller owns class eligibility, resource costs and initial creature statistics.");
 
 static PyObject* GemRB_ManageCompanion(PyObject* /*self*/, PyObject* args)
 {
@@ -77,7 +77,7 @@ static PyObject* GemRB_ManageCompanion(PyObject* /*self*/, PyObject* args)
 	bool created = false;
 	auto alive = [](const Actor* target) {
 		return target && !(target->GetStat(IE_STATE_ID) & STATE_DEAD) &&
-		       !(target->GetInternalFlag() & IF_CLEANUP) && target->GetStat(IE_HITPOINTS) > 0;
+			!(target->GetInternalFlag() & IF_CLEANUP) && target->GetStat(IE_HITPOINTS) > 0;
 	};
 	if (mode == 2) {
 		if (companion) RetireCompanion(game, companion);
@@ -116,8 +116,8 @@ static PyObject* GemRB_ManageCompanion(PyObject* /*self*/, PyObject* args)
 		}
 	}
 	return Py_BuildValue("{s:i,s:O,s:O,s:O}",
-		"ActorID", companion->GetGlobalID(),
-		"Alive", alive(companion) ? Py_True : Py_False,
-		"Created", created ? Py_True : Py_False,
-		"InArea", map && companion->GetCurrentArea() == map ? Py_True : Py_False);
+			     "ActorID", companion->GetGlobalID(),
+			     "Alive", alive(companion) ? Py_True : Py_False,
+			     "Created", created ? Py_True : Py_False,
+			     "InArea", map && companion->GetCurrentArea() == map ? Py_True : Py_False);
 }

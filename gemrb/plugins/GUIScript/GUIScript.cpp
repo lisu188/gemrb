@@ -12866,6 +12866,8 @@ static PyObject* GemRB_GetMultiClassPenalty(PyObject* /*self*/, PyObject* args)
 	return PyLong_FromLong(actor->GetFavoredPenalties());
 }
 
+#include "CompanionBindings.h"
+
 static PyMethodDef GemRBMethods[] = {
 	METHOD(ActOnPC, METH_VARARGS),
 	METHOD(AddGameTypeHint, METH_VARARGS),
@@ -12887,6 +12889,7 @@ static PyMethodDef GemRBMethods[] = {
 	METHOD(CountEffects, METH_VARARGS),
 	METHOD(CountSpells, METH_VARARGS),
 	METHOD(CreateCreature, METH_VARARGS),
+	METHOD(ManageCompanion, METH_VARARGS),
 	METHOD(CreateItem, METH_VARARGS),
 	METHOD(CreateMovement, METH_VARARGS),
 	METHOD(CreatePlayer, METH_VARARGS),
