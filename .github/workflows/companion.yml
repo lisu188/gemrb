@@ -35,6 +35,20 @@ jobs:
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUSE_TESTS=ON
           cmake --build build --parallel 2
+      - name: Preserve exact build for reproducible acceptance diagnostics
+        run: |
+          mkdir -p "$RUNNER_TEMP/companion-runtime"
+          git archive --format=tar HEAD > "$RUNNER_TEMP/companion-runtime/source.tar"
+          find build/gemrb \( -type f -o -type l \) \( -name '*.so*' -o -name gemrb \) -print0 | sort -z | tar --null -T - -czf "$RUNNER_TEMP/companion-runtime/native.tar.gz"
+          cp /usr/lib/x86_64-linux-gnu/libpython3.12.so.1.0 "$RUNNER_TEMP/companion-runtime/"
+          cp /usr/share/doc/libpython3.12-stdlib/copyright "$RUNNER_TEMP/companion-runtime/python-copyright"
+          tar -C /usr -czf "$RUNNER_TEMP/companion-runtime/python.tar.gz" lib/python3.12
+          git rev-parse HEAD > "$RUNNER_TEMP/companion-runtime/revision.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: companion-runtime-${{ github.sha }}
+          path: ${{ runner.temp }}/companion-runtime/*
+          retention-days: 7
       - name: Run CTest
         run: xvfb-run -a ctest --test-dir build --output-on-failure --no-tests=error
       - name: Run actual companion save and reload

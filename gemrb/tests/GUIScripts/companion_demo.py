@@ -62,6 +62,10 @@ def run():
             GemRB.MoveToArea("ar0110")
             assert not GemRB.ManageCompanion(1, "rabbit", 0)["InArea"]
             assert GemRB.ManageCompanion(1, "rabbit", 3)["InArea"]
+            # Saving rejects scattered PCs. Rejoin PC2 while leaving the
+            # persistent companion in the other area for the disk roundtrip.
+            GemRB.MoveToArea("ar0100")
+            assert not GemRB.ManageCompanion(1, "rabbit", 0)["InArea"]
             phase = 1
             reload_save("Companion Roundtrip A")
         elif phase == 1:
