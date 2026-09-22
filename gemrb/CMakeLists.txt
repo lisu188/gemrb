@@ -241,7 +241,8 @@ IF (BUILD_TESTING)
   ADD_NATIVE_SCRIPT_TEST(Test_GUIScripts_SpellCastCheck test_spell_cast_check.py
     core/GUI/GameControl.cpp plugins/GUIScript/GUIScript.cpp plugins/GUIScript/PythonCallbacks.h)
   ADD_NATIVE_SCRIPT_TEST(Test_GUIScripts_SaveGame test_save_game.py plugins/GUIScript/GUIScript.cpp)
-  FOREACH(name Test_GUIScripts_SpellCastCheck Test_GUIScripts_SaveGame)
+  ADD_NATIVE_SCRIPT_TEST(Test_GUIScripts_Companion test_companion.py plugins/GUIScript/CompanionBindings.h)
+  FOREACH(name Test_GUIScripts_SpellCastCheck Test_GUIScripts_SaveGame Test_GUIScripts_Companion)
     TARGET_INCLUDE_DIRECTORIES(${name}_Harness SYSTEM PRIVATE ${PYTHON_INCLUDE_DIRS})
     TARGET_LINK_LIBRARIES(${name}_Harness PRIVATE
       ${PYTHON_LIBRARIES} Threads::Threads ${CMAKE_DL_LIBS})
