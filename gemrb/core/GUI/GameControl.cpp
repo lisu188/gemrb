@@ -1856,6 +1856,24 @@ bool GameControl::CheckSpellCast(const Actor* source, const ResRef& spell) const
 	return !check || check(source->InParty ? source->InParty : source->GetGlobalID(), spell);
 }
 
+void GameControl::SetNonPartySpellCastCheck(std::function<bool(ieDword, const ResRef&, ResRef&)> check)
+{
+	nonPartySpellCastCheck = std::move(check);
+}
+
+bool GameControl::CheckNonPartySpellCast(const Actor* source, ResRef& spell) const
+{
+	if (!source || source->InParty) {
+		return true;
+	}
+	const auto check = nonPartySpellCastCheck;
+	if (!check) {
+		return true;
+	}
+	const ResRef original = spell;
+	return check(source->GetGlobalID(), original, spell);
+}
+
 //generate action code for source actor to use item/cast spell on a point
 void GameControl::TryToCast(Actor* source, const Point& tgt)
 {
