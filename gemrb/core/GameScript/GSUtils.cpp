@@ -2228,6 +2228,25 @@ static bool InterruptSpellcasting(Scriptable* Sender)
 	return false;
 }
 
+static bool AcceptScriptedSpellCast(Scriptable* sender, Actor* actor, Action* parameters)
+{
+	if (!actor || actor->InParty) return true;
+
+	GameControl* gc = core->GetGameControl();
+	if (!gc) return true;
+
+	ResRef accepted = sender->SpellResRef;
+	if (!gc->CheckScriptedSpellCast(actor, accepted)) return false;
+	if (accepted == sender->SpellResRef) return true;
+	if (!gamedata->Exists(accepted, IE_SPL_CLASS_ID)) return false;
+
+	// Persist the accepted executable variant on the action so later casting
+	// ticks and CastSpellEnd do not resolve the original resource again.
+	parameters->resref0Parameter = accepted;
+	sender->SetSpellResRef(accepted);
+	return true;
+}
+
 // shared spellcasting action code for casting on scriptables
 void SpellCore(Scriptable* Sender, Action* parameters, int flags)
 {
@@ -2349,6 +2368,13 @@ void SpellCore(Scriptable* Sender, Action* parameters, int flags)
 		return;
 	}
 
+	if (parameters->int2Parameter && !AcceptScriptedSpellCast(Sender, act, parameters)) {
+		parameters->int2Parameter = 0;
+		Sender->ReleaseCurrentAction();
+		if (act) act->SetStance(IE_ANI_READY);
+		return;
+	}
+
 	// mark as uninterruptible in the action sense, so further script
 	// updates don't remove the action before the casting is done
 	// the originals or at least iwd2 even marked it as IF_NOINT,
@@ -2467,6 +2493,13 @@ void SpellPointCore(Scriptable* Sender, Action* parameters, int flags)
 	}
 
 	if ((flags & SC_AURA_CHECK) && parameters->int2Parameter && Sender->AuraPolluted()) {
+		return;
+	}
+
+	if (parameters->int2Parameter && !AcceptScriptedSpellCast(Sender, act, parameters)) {
+		parameters->int2Parameter = 0;
+		Sender->ReleaseCurrentAction();
+		if (act) act->SetStance(IE_ANI_READY);
 		return;
 	}
 
