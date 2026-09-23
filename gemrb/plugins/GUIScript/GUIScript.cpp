@@ -11224,6 +11224,74 @@ static PyObject* GemRB_SetSpellCastCheck(PyObject* /*self*/, PyObject* args)
 	Py_RETURN_NONE;
 }
 
+
+struct PythonScriptedSpellCastCheck : PythonCallback {
+	using PythonCallback::PythonCallback;
+
+	bool operator()(ieDword actorID, const ResRef& spell, ResRef& replacement) const
+	{
+		PyObject* args = Py_BuildValue("(Is)", actorID, spell.c_str());
+		if (!args) {
+			PyErr_Print();
+			return false;
+		}
+		PyObject* result = CallObjectWrapper(Function, args);
+		Py_DECREF(args);
+		if (!result) {
+			if (PyErr_Occurred()) PyErr_Print();
+			return false;
+		}
+
+		if (PyUnicode_Check(result)) {
+			replacement = ResRefFromPy(result);
+			Py_DECREF(result);
+			return !replacement.IsEmpty();
+		}
+
+		int allowed = PyObject_IsTrue(result);
+		Py_DECREF(result);
+		if (allowed < 0 || PyErr_Occurred()) {
+			PyErr_Print();
+			return false;
+		}
+		replacement = spell;
+		return allowed > 0;
+	}
+};
+
+PyDoc_STRVAR(GemRB_SetScriptedSpellCastCheck__doc,
+	     "===== SetScriptedSpellCastCheck =====\n\
+\n\
+**Prototype:** GemRB.SetScriptedSpellCastCheck (Callback)\n\
+\n\
+**Description:** Installs an optional accepted-cast check for non-party scripted\n\
+spell actions. The callback receives (actorGlobalID, spellResRef) once after\n\
+target, range, line-of-sight and aura validation and immediately before the\n\
+first CastSpell/CastSpellPoint call. Return True to keep the resolved resource,\n\
+a non-empty string to substitute the executable resource, or False/None to veto.\n\
+Callback exceptions veto the cast. Substitution is intended for behaviorally\n\
+equivalent spell variants that preserve the original target/range contract.\n\
+Party and GUI casts continue to use SetSpellCastCheck and do not invoke this\n\
+callback. None removes the check.\n\
+\n\
+**Return value:** N/A\n\
+");
+
+static PyObject* GemRB_SetScriptedSpellCastCheck(PyObject* /*self*/, PyObject* args)
+{
+	PyObject* callback = nullptr;
+	PARSE_ARGS(args, "O", &callback);
+	GET_GAMECONTROL();
+	if (callback == Py_None) {
+		gc->SetScriptedSpellCastCheck(nullptr);
+	} else if (PyCallable_Check(callback)) {
+		gc->SetScriptedSpellCastCheck(PythonScriptedSpellCastCheck(callback));
+	} else {
+		return RuntimeError("Scripted spell cast check must be callable or None.");
+	}
+	Py_RETURN_NONE;
+}
+
 PyDoc_STRVAR(GemRB_SpellCast__doc,
 	     "===== SpellCast =====\n\
 \n\
@@ -13072,6 +13140,7 @@ static PyMethodDef GemRBMethods[] = {
 	METHOD(SetPlayerString, METH_VARARGS),
 	METHOD(SetPurchasedAmount, METH_VARARGS),
 	METHOD(SetSpellCastCheck, METH_VARARGS),
+	METHOD(SetScriptedSpellCastCheck, METH_VARARGS),
 	METHOD(SetTimedEvent, METH_VARARGS),
 	METHOD(SetTimer, METH_VARARGS),
 	METHOD(SetToken, METH_VARARGS),
