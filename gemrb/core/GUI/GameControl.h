@@ -85,6 +85,7 @@ private:
 
 	EventMgr::TapMonitorId eventMonitors[2];
 	std::function<bool(ieDword, const ResRef&)> spellCastCheck;
+	std::function<bool(ieDword, const ResRef&, ResRef&)> scriptedSpellCastCheck;
 
 public:
 	static uint32_t DebugFlags;
@@ -188,6 +189,9 @@ public:
 	/** Optional GUI-only check, called after targeting validation and before queuing a spell. */
 	void SetSpellCastCheck(std::function<bool(ieDword, const ResRef&)> check);
 	bool CheckSpellCast(const Actor* source, const ResRef& spell) const;
+	/** Optional non-party scripted-cast check, called once after action validation. */
+	void SetScriptedSpellCastCheck(std::function<bool(ieDword, const ResRef&, ResRef&)> check);
+	bool CheckScriptedSpellCast(const Actor* source, ResRef& spell) const;
 	void TryToDefend(Actor* source, const Actor* target) const;
 	void TryToTalk(Actor* source, const Actor* target) const;
 	void TryToPick(Actor* source, const Scriptable* tgt) const;
