@@ -11246,7 +11246,7 @@ struct PythonNonPartySpellCastCheck : PythonCallback {
 		bool allowed = false;
 		if (PyUnicode_Check(result)) {
 			replacement = ResRefFromPy(result);
-			allowed = !replacement.IsEmpty();
+			allowed = replacement != ResRef();
 		} else {
 			const int truth = PyObject_IsTrue(result);
 			if (truth < 0) {
