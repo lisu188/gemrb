@@ -95,6 +95,7 @@ static PyObject* GemRB_ManageCompanion(PyObject* /*self*/, PyObject* args)
 				game->locals["GMC_NEXT"] = token;
 				actor->locals[key] = token;
 			}
+			fresh->CreateStats();
 			fresh->SetScriptName(name);
 			fresh->ignoredFields.origScriptName = name;
 			fresh->locals["GMC_TOKEN"] = token;
