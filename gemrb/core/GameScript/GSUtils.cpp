@@ -2349,6 +2349,21 @@ void SpellCore(Scriptable* Sender, Action* parameters, int flags)
 		return;
 	}
 
+	if (parameters->int2Parameter && act && !act->InParty) {
+		GameControl* gc = core->GetGameControl();
+		if (gc) {
+			ResRef acceptedSpell = Sender->SpellResRef;
+			if (!gc->CheckNonPartySpellCast(act, acceptedSpell)) {
+				parameters->int2Parameter = 0;
+				Sender->ReleaseCurrentAction();
+				return;
+			}
+			if (acceptedSpell != Sender->SpellResRef) {
+				Sender->SetSpellResRef(acceptedSpell);
+			}
+		}
+	}
+
 	// mark as uninterruptible in the action sense, so further script
 	// updates don't remove the action before the casting is done
 	// the originals or at least iwd2 even marked it as IF_NOINT,
@@ -2468,6 +2483,21 @@ void SpellPointCore(Scriptable* Sender, Action* parameters, int flags)
 
 	if ((flags & SC_AURA_CHECK) && parameters->int2Parameter && Sender->AuraPolluted()) {
 		return;
+	}
+
+	if (parameters->int2Parameter && act && !act->InParty) {
+		GameControl* gc = core->GetGameControl();
+		if (gc) {
+			ResRef acceptedSpell = Sender->SpellResRef;
+			if (!gc->CheckNonPartySpellCast(act, acceptedSpell)) {
+				parameters->int2Parameter = 0;
+				Sender->ReleaseCurrentAction();
+				return;
+			}
+			if (acceptedSpell != Sender->SpellResRef) {
+				Sender->SetSpellResRef(acceptedSpell);
+			}
+		}
 	}
 
 	// mark as uninterruptible in the action sense, so further script

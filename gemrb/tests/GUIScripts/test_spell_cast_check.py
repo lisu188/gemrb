@@ -106,11 +106,14 @@ struct GameData { int GetSpecialSpell(const ResRef&) const { return 0; } } gameD
 GameData* gamedata=&gameDataStorage;
 struct GameControl {
     std::function<bool(ieDword, const ResRef&)> spellCastCheck;
+    std::function<bool(ieDword, const ResRef&, ResRef&)> nonPartySpellCastCheck;
     ResRef spellName="prepared";
     int spellOrItem=0, spellSlot=0, spellIndex=0, spellCount=1, targetTypes=GA_POINT;
     TargetMode targetMode=TargetMode::Cast;
     void SetSpellCastCheck(std::function<bool(ieDword, const ResRef&)>);
     bool CheckSpellCast(const Actor*, const ResRef&) const;
+    void SetNonPartySpellCastCheck(std::function<bool(ieDword, const ResRef&, ResRef&)>);
+    bool CheckNonPartySpellCast(const Actor*, ResRef&) const;
     void TryToCast(Actor*, const Point&);
     void TryToCast(Actor*, const Actor*);
     void ResetTargetMode();
@@ -140,6 +143,10 @@ static PyObject* RuntimeError(const char* message) {
     PyErr_SetString(PyExc_RuntimeError, message);
     return nullptr;
 }
+static ResRef ResRefFromPy(PyObject* value) {
+    const char* text=PyUnicode_AsUTF8(value);
+    return text ? ResRef(text) : ResRef();
+}
 '''
 
 
@@ -154,6 +161,12 @@ static void install(const char* body) {
     runPython(body);
     PyObject* args=PyTuple_Pack(1, PyDict_GetItemString(globals, "check"));
     PyObject* result=GemRB_SetSpellCastCheck(nullptr, args);
+    assert(result); Py_DECREF(result); Py_DECREF(args);
+}
+static void installNonParty(const char* body) {
+    runPython(body);
+    PyObject* args=PyTuple_Pack(1, PyDict_GetItemString(globals, "check"));
+    PyObject* result=GemRB_SetNonPartySpellCastCheck(nullptr, args);
     assert(result); Py_DECREF(result); Py_DECREF(args);
 }
 static int calls() { return PyList_Size(PyDict_GetItemString(globals, "events")); }
@@ -259,6 +272,29 @@ int main(int argc, char** argv) {
         install("class BadBool:\n def __bool__(self): raise RuntimeError('truth veto')\ndef check(*args): return BadBool()\n");
         cast(TARGET_AREA); control.TryToCast(&caster,Point{});
         assert(!PyErr_Occurred() && caster.actions.empty());
+    } else if (test=="nonparty_substitution") {
+        caster.InParty=0;
+        installNonParty("events=[]\ndef check(actor,spell):\n events.append((actor,spell)); return 'variant'\n");
+        ResRef spell="base";
+        assert(control.CheckNonPartySpellCast(&caster, spell));
+        assert(spell=="variant");
+        checkEvents("events == [(4242,'base')]");
+        caster.InParty=1;
+        spell="party";
+        assert(control.CheckNonPartySpellCast(&caster, spell));
+        assert(spell=="party" && calls()==1);
+    } else if (test=="nonparty_veto") {
+        caster.InParty=0;
+        installNonParty("events=[]\ndef check(actor,spell):\n events.append((actor,spell)); return False\n");
+        ResRef spell="base";
+        assert(!control.CheckNonPartySpellCast(&caster, spell));
+        assert(spell=="base" && calls()==1);
+        installNonParty("def check(*args): raise RuntimeError('npc veto')\n");
+        assert(!control.CheckNonPartySpellCast(&caster, spell));
+        assert(!PyErr_Occurred());
+        installNonParty("class BadBool:\n def __bool__(self): raise RuntimeError('npc truth veto')\ndef check(*args): return BadBool()\n");
+        assert(!control.CheckNonPartySpellCast(&caster, spell));
+        assert(!PyErr_Occurred());
     } else if (test=="lifetime") {
         install(allow);
         PyObject* callback=PyDict_GetItemString(globals,"check");
@@ -284,6 +320,7 @@ int main(int argc, char** argv) {
     caster.actions.clear();
     assert(Action::live == 0); // vetoes and invalid targets must release unqueued actions
     control.SetSpellCastCheck(nullptr); // release Python state before finalization
+    control.SetNonPartySpellCastCheck(nullptr);
     Py_Finalize();
     std::cout << test << " passed\n";
 }
@@ -300,6 +337,8 @@ def generate_harness():
     for signature in (
         "void GameControl::SetSpellCastCheck(",
         "bool GameControl::CheckSpellCast(",
+        "void GameControl::SetNonPartySpellCastCheck(",
+        "bool GameControl::CheckNonPartySpellCast(",
         "void GameControl::ResetTargetMode(",
         "void GameControl::TryToCast(Actor* source, const Point&",
         "void GameControl::TryToCast(Actor* source, const Actor*",
@@ -312,7 +351,9 @@ def generate_harness():
     ground_cast = function(dispatch, "if (targetMode == TargetMode::Cast && !(gamedata->GetSpecialSpell")
     pieces.append("void GameControl::DispatchGround(Actor* selectedActor, const Point& p) {\n" + ground_cast + "\n}")
     pieces.append(function(gui_script, "struct PythonSpellCastCheck") + ";")
+    pieces.append(function(gui_script, "struct PythonNonPartySpellCastCheck") + ";")
     pieces.append(function(gui_script, "static PyObject* GemRB_SetSpellCastCheck("))
+    pieces.append(function(gui_script, "static PyObject* GemRB_SetNonPartySpellCastCheck("))
     pieces.append(function(gui_script, "static PyObject* GemRB_SpellCast("))
     pieces.append(SCENARIOS)
     return "\n".join(pieces)
@@ -338,6 +379,20 @@ class SpellCastCheckTests(unittest.TestCase):
     def test_items_do_not_invoke_spell_check(self): self.scenario("items")
     def test_actual_substitution_global_actor_id_and_multiple_targets(self): self.scenario("identity_and_targets")
     def test_python_and_truth_conversion_exceptions_fail_closed(self): self.scenario("exceptions")
+    def test_nonparty_callback_can_substitute_and_skips_party(self): self.scenario("nonparty_substitution")
+    def test_nonparty_callback_veto_and_exceptions_fail_closed(self): self.scenario("nonparty_veto")
+    def test_nonparty_hook_runs_at_script_acceptance_boundary(self):
+        source = (ROOT / "core/GameScript/GSUtils.cpp").read_text()
+        actor_cast = function(source, "void SpellCore(")
+        point_cast = function(source, "void SpellPointCore(")
+        for body, cast_call in (
+            (actor_cast, "Sender->CastSpell("),
+            (point_cast, "Sender->CastSpellPoint("),
+        ):
+            self.assertIn("parameters->int2Parameter && act && !act->InParty", body)
+            hook = body.index("CheckNonPartySpellCast")
+            self.assertLess(body.index("AuraPolluted"), hook)
+            self.assertLess(hook, body.index(cast_call))
     def test_unregister_gamecontrol_lifetime_and_invalid_registration(self): self.scenario("lifetime")
 
 
