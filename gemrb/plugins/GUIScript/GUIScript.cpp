@@ -11224,6 +11224,78 @@ static PyObject* GemRB_SetSpellCastCheck(PyObject* /*self*/, PyObject* args)
 	Py_RETURN_NONE;
 }
 
+struct PythonNonPartySpellCastCheck : PythonCallback {
+	using PythonCallback::PythonCallback;
+
+	bool operator()(ieDword actorID, const ResRef& spell, ResRef& replacement) const
+	{
+		PyObject* args = Py_BuildValue("(Is)", actorID, spell.c_str());
+		if (!args) {
+			PyErr_Print();
+			return false;
+		}
+		PyObject* result = CallObjectWrapper(Function, args);
+		Py_DECREF(args);
+		if (!result) {
+			if (PyErr_Occurred()) {
+				PyErr_Print();
+			}
+			return false;
+		}
+
+		bool allowed = false;
+		if (PyUnicode_Check(result)) {
+			replacement = ResRefFromPy(result);
+			allowed = !replacement.IsEmpty();
+		} else {
+			const int truth = PyObject_IsTrue(result);
+			if (truth < 0) {
+				PyErr_Print();
+				allowed = false;
+			} else {
+				allowed = truth > 0;
+			}
+		}
+		Py_DECREF(result);
+		return allowed;
+	}
+};
+
+PyDoc_STRVAR(GemRB_SetNonPartySpellCastCheck__doc,
+	     "===== SetNonPartySpellCastCheck =====\n\
+\n\
+**Prototype:** GemRB.SetNonPartySpellCastCheck (Callback)\n\
+\n\
+**Description:** Installs an optional check for accepted scripted casts by non-party actors.\n\
+The callback receives (actorGlobalID, spellResRef) after target, range, line-of-sight\n\
+and aura checks succeed and immediately before the script action starts casting.\n\
+Return True to preserve the resolved spell, a non-empty string to replace the\n\
+executable spell resource, or False/None to veto the cast. Python exceptions and\n\
+truth-conversion failures veto. The hook runs once per accepted actor- or point-target\n\
+script cast and does not run for party actors or GUI targeting. A replacement must\n\
+preserve the selected power's target/range contract because validation has completed.\n\
+It lasts for the current GameControl lifetime; None removes the check.\n\
+\n\
+**Return value:** N/A\n\
+\n\
+**See also:** [SetSpellCastCheck](SetSpellCastCheck.md), [SpellCast](SpellCast.md)\n\
+");
+
+static PyObject* GemRB_SetNonPartySpellCastCheck(PyObject* /*self*/, PyObject* args)
+{
+	PyObject* callback = nullptr;
+	PARSE_ARGS(args, "O", &callback);
+	GET_GAMECONTROL();
+	if (callback == Py_None) {
+		gc->SetNonPartySpellCastCheck(nullptr);
+	} else if (PyCallable_Check(callback)) {
+		gc->SetNonPartySpellCastCheck(PythonNonPartySpellCastCheck(callback));
+	} else {
+		return RuntimeError("Non-party spell cast check must be callable or None.");
+	}
+	Py_RETURN_NONE;
+}
+
 PyDoc_STRVAR(GemRB_SpellCast__doc,
 	     "===== SpellCast =====\n\
 \n\
@@ -13072,6 +13144,7 @@ static PyMethodDef GemRBMethods[] = {
 	METHOD(SetPlayerString, METH_VARARGS),
 	METHOD(SetPurchasedAmount, METH_VARARGS),
 	METHOD(SetSpellCastCheck, METH_VARARGS),
+	METHOD(SetNonPartySpellCastCheck, METH_VARARGS),
 	METHOD(SetTimedEvent, METH_VARARGS),
 	METHOD(SetTimer, METH_VARARGS),
 	METHOD(SetToken, METH_VARARGS),
