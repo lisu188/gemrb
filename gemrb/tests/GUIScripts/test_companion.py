@@ -64,6 +64,7 @@ struct Actor {
     void SetBase(int s, unsigned v) { stats[s]=v; }
     void SetPosition(const Point& p, bool, Size) { Pos=p; }
     void RefreshEffects() {}
+    void CreateStats() {}
     void DestroySelf() { flags |= IF_CLEANUP; }
     void ClearActions() { ++clears; }
 };
