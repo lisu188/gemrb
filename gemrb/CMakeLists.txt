@@ -219,6 +219,9 @@ IF (BUILD_TESTING)
   ADD_TEST(NAME Test_GUIScripts_BGEELevelup
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/GUIScripts/test_bgee_levelup.py
   )
+  ADD_TEST(NAME Test_GUIScripts_InventoryStore
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/GUIScripts/test_inventory_store.py
+  )
   # Generate from production bodies, then use the configured compiler and
   # Python development library rather than compiling from the test interpreter.
   FUNCTION(ADD_NATIVE_SCRIPT_TEST name script)
