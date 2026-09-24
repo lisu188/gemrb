@@ -39,6 +39,8 @@ def CalcLimits(Abidx):
 
 	RaceName = GUICommon.GetRaceRowName (MyChar)
 	Race = Abracerq.GetRowIndex (RaceName)
+	if Race is None and RaceName == "HALF_ORC":
+		Race = Abracerq.GetRowIndex ("HALFORC")
 	tmp = Abracerq.GetValue (Race, Abidx * 2, GTV_INT)
 	if tmp > Minimum:
 		Minimum = tmp
@@ -52,6 +54,8 @@ def CalcLimits(Abidx):
 		Minimum = tmp
 
 	Race = Abracead.GetRowIndex (RaceName)
+	if Race is None and RaceName == "HALF_ORC":
+		Race = Abracead.GetRowIndex ("HALFORC")
 	Add = Abracead.GetValue (Race, Abidx, GTV_INT)
 	Minimum += Add
 	Maximum += Add
