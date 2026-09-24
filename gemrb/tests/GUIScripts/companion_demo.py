@@ -71,7 +71,7 @@ def run():
         elif phase == 1:
             first = GemRB.ManageCompanion(1, "rabbit", 3)
             second = GemRB.ManageCompanion(2, "rabbit", 3)
-            assert first and second and first["Alive"] and second["Alive"]
+            assert first and second and first["Alive"] and second["Alive"], ("companions after first reload", first, second)
             assert [GemRB.GetPlayerName(row["ActorID"], 2) for row in (first, second)] == expected["names"]
             assert GemRB.GetPlayerStat(first["ActorID"], IE_HITPOINTS) == 3
             assert GemRB.GetPlayerStat(second["ActorID"], IE_HITPOINTS) == 7

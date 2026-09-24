@@ -41,11 +41,25 @@ struct Size { Size(int, int) {} };
 constexpr int IE_STATE_ID=0, IE_HITPOINTS=1, IE_EA=2, IE_XPVALUE=3;
 constexpr unsigned STATE_DEAD=0x800, IF_CLEANUP=0x4000;
 constexpr int EA_CONTROLLED=5, SELECT_NORMAL=0;
+struct EffectRef { const char* name; int opcode; };
+struct Effect {
+    unsigned Opcode=187, IsVariable=1, Parameter1=0;
+    ieVariable VariableName;
+};
+struct EffectQueue {
+    std::vector<Effect> effects;
+    static int ResolveEffect(EffectRef&) { return 187; }
+    auto GetFirstEffect() const { return effects.cbegin(); }
+    const Effect* GetNextEffect(std::vector<Effect>::const_iterator& iterator) const {
+        return iterator==effects.cend() ? nullptr : &*iterator++;
+    }
+};
 struct Map;
 struct Actor {
     unsigned id=1001, InParty=0, flags=0;
     std::map<std::string, unsigned> locals;
     std::map<int, unsigned> stats{{IE_HITPOINTS,10}};
+    EffectQueue fxqueue;
     ieVariable name;
     struct { ieVariable origScriptName; } ignoredFields;
     Map* area=nullptr;
@@ -152,6 +166,32 @@ int main(int argc,char** argv) {
         r=invoke(1); assert(!flag(r,"InArea")); Py_DECREF(r); assert(a->area==&areaA);
         r=invoke(1,"pscrbody",3); assert(flag(r,"InArea") && !flag(r,"Created")); Py_DECREF(r);
         assert(a->area==&areaB && a->GetStat(IE_HITPOINTS)==4 && a->Pos.x==70);
+    } else if(test=="reload_unloaded") {
+        PyObject* r=invoke(1,"pscrbody",1); unsigned id=actorId(r); Py_DECREF(r); auto* a=storage.npcs.at(0);
+        unsigned token=a->locals["GMC_TOKEN"];
+        a->locals.clear(); a->area=nullptr;
+        a->fxqueue.effects.push_back({187,1,token,"GMC_TOKEN"});
+        r=invoke(1); assert(actorId(r)==id && !flag(r,"InArea")); Py_DECREF(r);
+        assert(a->area==nullptr && a->locals.empty() && a->fxqueue.effects.size()==1);
+        r=invoke(1,"pscrbody",3); assert(actorId(r)==id && flag(r,"InArea") && !flag(r,"Created")); Py_DECREF(r);
+        assert(storage.npcs.size()==1 && a->objects.LastSummoner==owner.id);
+    } else if(test=="saved_marker_validation") {
+        PyObject* r=invoke(1,"pscrbody",1); Py_DECREF(r); auto* a=storage.npcs.at(0);
+        unsigned token=a->locals["GMC_TOKEN"];
+        a->locals.clear(); a->area=nullptr;
+        a->fxqueue.effects.push_back({187,1,token,"UNRELATED"});
+        rejected(invoke(1));
+        a->fxqueue.effects.push_back({187,0,token,"GMC_TOKEN"});
+        rejected(invoke(1));
+        a->fxqueue.effects.push_back({187,1,token,"GMC_TOKEN"});
+        a->locals["GMC_TOKEN"]=0;
+        rejected(invoke(1));
+        assert(storage.npcs.size()==1 && a->area==nullptr && a->flags==0);
+    } else if(test=="saved_duplicate_owner") {
+        PyObject* r=invoke(1,"pscrbody",1); Py_DECREF(r);
+        other.fxqueue.effects.push_back({187,1,owner.locals["GMC_pscrbody"],"GMC_pscrbody"});
+        rejected(invoke(1,"pscrbody",2));
+        assert(storage.npcs.size()==1);
     } else if(test=="death") {
         PyObject* r=invoke(1,"pscrbody",1); unsigned old=actorId(r); Py_DECREF(r);
         auto* a=storage.npcs.at(0); a->stats[IE_STATE_ID]=STATE_DEAD;
@@ -214,7 +254,8 @@ class CompanionTests(unittest.TestCase):
 
 for scenario in ("inspect", "create_recall", "two_owners", "reload", "transition", "death", "missing_template",
                  "registration_failure", "foreign_collision", "marker_mismatch", "duplicate_owner", "registry",
-                 "invalid_input", "owner_unavailable", "dismiss_unloaded"):
+                 "invalid_input", "owner_unavailable", "dismiss_unloaded", "reload_unloaded",
+                 "saved_marker_validation", "saved_duplicate_owner"):
     setattr(CompanionTests, "test_" + scenario, lambda self, name=scenario: self.scenario(name))
 
 

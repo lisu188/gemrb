@@ -114,5 +114,40 @@ class StartupTests(unittest.TestCase):
                 self.assertIn(('next', 'ExportFile'), events)
 
 
+class AbilityRaceTests(unittest.TestCase):
+    def test_half_orc_limits_use_each_installed_table_spelling(self):
+        source = (Path(__file__).resolve().parents[2] / 'GUIScripts/GUICG4.py').read_text()
+        callback = next(node for node in ast.parse(source).body
+                        if isinstance(node, ast.FunctionDef) and node.name == 'CalcLimits')
+
+        class Table:
+            def __init__(self, spelling, values):
+                self.spelling, self.values = spelling, values
+
+            def GetRowIndex(self, name):
+                return 0 if name == self.spelling else None
+
+            def GetValue(self, row, column, *args):
+                self_test.assertIsNotNone(row, 'unresolved Half-Orc ability row')
+                return self.values[column]
+
+        self_test = self
+        for requirements in ('HALFORC', 'HALF_ORC'):
+            for adjustments in ('HALFORC', 'HALF_ORC'):
+                with self.subTest(requirements=requirements, adjustments=adjustments):
+                    namespace = {
+                        'GUICommon': SimpleNamespace(GetRaceRowName=lambda actor: 'HALF_ORC'),
+                        'MyChar': 1, 'GTV_INT': 0, 'KitIndex': 0, 'Abclsmod': None,
+                        'Abracerq': Table(requirements, [3, 18] * 6),
+                        'Abracead': Table(adjustments, [1, 0, 1, -2, 0, 0]),
+                        'Abclasrq': Table('class', [0, 0, 0, 15, 0, 0]),
+                    }
+                    exec(compile(ast.Module(body=[callback], type_ignores=[]), 'GUICG4.CalcLimits', 'exec'), namespace)
+                    namespace['CalcLimits'](0)
+                    self.assertEqual((namespace['Minimum'], namespace['Maximum'], namespace['Add']), (4, 19, 1))
+                    namespace['CalcLimits'](3)
+                    self.assertEqual((namespace['Minimum'], namespace['Maximum'], namespace['Add']), (13, 16, -2))
+
+
 if __name__ == '__main__':
     unittest.main()
