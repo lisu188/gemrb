@@ -11,6 +11,7 @@ or starting the engine. They do not constitute live gameplay acceptance.
 from contextlib import redirect_stdout
 import importlib.util
 import io
+import json
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -122,6 +123,9 @@ class Window:
     def ShowModal(self, shadow):
         self.modal = shadow
 
+    def Close(self):
+        self.closed = True
+
 
 class Engine:
     def __init__(self, tables):
@@ -130,6 +134,7 @@ class Engine:
         self.variables = {}
         self.tokens = {"number": "2"}  # left over from the preceding spell chooser
         self.stats = {STATS.IE_CLASS: 22, STATS.IE_ALIGNMENT: 18}
+        self.effects = {}
 
     def LoadTable(self, name, *unused):
         self.loaded.append(name)
@@ -147,8 +152,13 @@ class Engine:
     def GetPlayerStat(self, pc, stat, *unused):
         return self.stats.get(stat, 0)
 
-    def CountEffects(self, *unused):
-        return 0
+    def CountEffects(self, pc, effect, parameter1, parameter2, resource):
+        return self.effects.get(resource, 0)
+
+    def ApplyEffect(self, pc, effect, parameter1, parameter2, resource):
+        if effect != "HLA" or parameter2 != 0:
+            raise AssertionError("unexpected HLA persistence format")
+        self.effects[resource] = parameter1
 
     def LoadWindow(self, *unused):
         return self.window
@@ -243,6 +253,108 @@ class HLASelectionTests(unittest.TestCase):
     def get_hlas(self, module):
         with redirect_stdout(io.StringIO()):
             module.GetHLAs()
+
+    def setup_planetars(self, alignment):
+        engine, module = self.setup_selection(count=0)
+        # The installed BG2EE merged Sorcerer/Monk table retains these wizard
+        # rows: ALIGNMENT_RESTRICT names the excluded group, not a prerequisite.
+        engine.tables["lutest"].rows = [
+            ("6", ["GA_SPWI923", "*", "*", 1, 99, 1, "*", "GA_SPWI924", "ALL_EVIL"]),
+            ("7", ["GA_SPWI924", "*", "*", 1, 99, 1, "*", "GA_SPWI923", "ALL_GOOD"]),
+        ]
+        engine.stats[STATS.IE_ALIGNMENT] = alignment
+        self.get_hlas(module)
+        module.HLAWindow = Window(engine)
+        module.HLATextArea = module.HLAWindow.GetControl(41)
+        module.HLADoneButton = module.HLAWindow.GetControl(42)
+        return engine, module
+
+    def select(self, engine, module, resource):
+        index = [row[0] for row in module.HLAAbilities].index(resource)
+        engine.SetVar("ButtonPressed", index)
+        module.HLASelectPress()
+        return index
+
+    def test_alignment_restrictions_exclude_the_moral_axis_for_all_nine_alignments(self):
+        expected = (
+            (0x11, ["GA_SPWI923"]),  # lawful good
+            (0x12, ["GA_SPWI923", "GA_SPWI924"]),  # lawful neutral
+            (0x13, ["GA_SPWI924"]),  # lawful evil
+            (0x21, ["GA_SPWI923"]),  # neutral good
+            (0x22, ["GA_SPWI923", "GA_SPWI924"]),  # true neutral
+            (0x23, ["GA_SPWI924"]),  # neutral evil
+            (0x31, ["GA_SPWI923"]),  # chaotic good
+            (0x32, ["GA_SPWI923", "GA_SPWI924"]),  # chaotic neutral
+            (0x33, ["GA_SPWI924"]),  # chaotic evil
+        )
+        for alignment, resources in expected:
+            with self.subTest(alignment=hex(alignment)):
+                _, module = self.setup_planetars(alignment)
+                self.assertEqual([row[0] for row in module.HLAAbilities], resources)
+                self.assertTrue(all(row[1] for row in module.HLAAbilities))
+
+    def test_neutral_planetar_choices_exclude_each_other_and_can_be_cancelled(self):
+        for chosen, excluded in (("GA_SPWI923", "GA_SPWI924"), ("GA_SPWI924", "GA_SPWI923")):
+            with self.subTest(chosen=chosen):
+                engine, module = self.setup_planetars(0x12)
+                first = self.select(engine, module, chosen)
+                second = self.select(engine, module, excluded)
+                self.assertEqual(module.HLANewAbilities[first], 1)
+                self.assertEqual(module.HLANewAbilities[second], 0)
+                self.assertEqual(module.HLAAbilities[second][1], 0)
+                self.assertEqual(module.HLACount, 0)
+                self.select(engine, module, chosen)
+                self.assertEqual(module.HLANewAbilities, [0, 0])
+                self.assertEqual([row[1] for row in module.HLAAbilities], [1, 1])
+                self.assertEqual(module.HLACount, 1)
+
+    def test_committed_planetar_uses_existing_spell_and_saved_hla_marker_contract(self):
+        # This is the GUI-to-engine persistence contract. Native save/reload is
+        # covered separately by the campaign acceptance, not by this API stub.
+        for chosen in ("GA_SPWI923", "GA_SPWI924"):
+            with self.subTest(chosen=chosen):
+                engine, module = self.setup_planetars(0x22)
+                learned = []
+                module.Spellbook.LearnSpell = lambda *args: learned.append(args)
+                self.select(engine, module, chosen)
+                module.HLADonePress()
+                self.assertEqual(learned, [(1, chosen[3:], DEFINES.IE_SPELL_TYPE_WIZARD, 8, 1, SPELLS.LS_MEMO)])
+                self.assertEqual(engine.effects, {chosen[3:]: 1})
+                self.assertTrue(module.HLAWindow.closed)
+                self.assertEqual(engine.GetVar("HLACount"), 0)
+
+                saved_markers = json.loads(json.dumps(engine.effects))
+                restored, reopened = self.setup_planetars(0x22)
+                restored.effects = saved_markers
+                self.get_hlas(reopened)
+                self.assertEqual([row[1] for row in reopened.HLAAbilities], [0, 0])
+                self.assertEqual(reopened.HLACount, 0)
+                selected = next(row for row in reopened.HLAAbilities if row[0] == chosen)
+                self.assertEqual(selected[2], 1)
+
+    def test_selecting_prerequisite_unlocks_upgrade_and_prevents_orphaned_selection(self):
+        engine, module = self.setup_selection(count=0)
+        engine.tables["lutest"].rows = [
+            ("9", ["GA_SPCL900", "*", "*", 1, 99, 20, "*", "*", "*"]),
+            ("10", ["GA_SPCL901", "*", "*", 1, 99, 20, "GA_SPCL900", "*", "*"]),
+        ]
+        self.get_hlas(module)
+        module.HLACount = 2
+        module.HLAWindow = Window(engine)
+        module.HLATextArea = module.HLAWindow.GetControl(41)
+        module.HLADoneButton = module.HLAWindow.GetControl(42)
+        self.assertEqual([row[1] for row in module.HLAAbilities], [1, 0])
+        self.select(engine, module, "GA_SPCL900")
+        self.assertEqual([row[1] for row in module.HLAAbilities], [1, 1])
+        self.select(engine, module, "GA_SPCL901")
+        self.select(engine, module, "GA_SPCL900")
+        self.assertEqual(module.HLANewAbilities, [1, 1])
+        self.assertEqual(module.HLACount, 0)
+        self.select(engine, module, "GA_SPCL901")
+        self.select(engine, module, "GA_SPCL900")
+        self.assertEqual(module.HLANewAbilities, [0, 0])
+        self.assertEqual([row[1] for row in module.HLAAbilities], [1, 0])
+        self.assertEqual(module.HLACount, 2)
 
     def test_merged_table_has_one_row_and_selection_credit_per_ability(self):
         engine, module = self.setup_selection()
