@@ -4,11 +4,13 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Run persistent companion acceptance against the distributable GemRB demo."""
 import argparse
+from collections import Counter
 import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
+from companion_saved_actors import saved_bodies
 
 LIVE = r'''
 import GemRB
@@ -138,6 +140,31 @@ def main():
     if not report.exists():
         raise SystemExit(f"No companion acceptance report; engine exit {result.returncode}; see {output / 'engine.log'}")
     data = json.loads(report.read_text())
+    if result.returncode == 0 and data.get("passed"):
+        try:
+            census = {}
+            for label, expected_tokens in (("Companion Roundtrip A", {1: 1, 2: 1}),
+                                           ("Companion Roundtrip B", {2: 1})):
+                directories = list((game / "save").glob("*-" + label))
+                assert len(directories) == 1, ("missing or ambiguous save", label, directories)
+                directory = directories[0]
+                census[label] = saved_bodies(directory / "gem-demo.gam", directory / "gem-demo.sav")
+                counts = Counter(body["token"] for body in census[label]["bodies"])
+                assert counts == expected_tokens, ("saved companion bodies", label, counts, expected_tokens)
+            data["checks"].append("no retired bodies in saved game or areas")
+        except Exception as error:
+            data["passed"] = False
+            data["saved_actor_error"] = repr(error)
+        data["saved_actor_census"] = census
+        report.write_text(json.dumps(data, indent=2))
+    log_text = (output / "engine.log").read_text(errors="replace")
+    errors = [marker for marker in ("Traceback (most recent call last):",
+                                   "[GUIScript/ERROR]: Runtime Error:",
+                                   "[GUIScript/ERROR]: Unhandled target type") if marker in log_text]
+    if errors:
+        data["passed"] = False
+        data["forbidden_log_errors"] = errors
+        report.write_text(json.dumps(data, indent=2))
     print(json.dumps(data, indent=2))
     if result.returncode != 0 or not data.get("passed"):
         raise SystemExit(1)
