@@ -568,6 +568,19 @@ static bool CreateSavePath(path_t& path, int index, StringView slotname)
 	return true;
 }
 
+static bool PrepareSavePreview(Holder<Sprite2D>& preview)
+{
+	if (!preview) {
+		WindowManager* wm = core->GetWindowManager();
+		if (wm) preview = wm->GetScreenshotPreview();
+	}
+	if (!preview) {
+		Log(ERROR, "SaveGameIterator", "Couldn't capture the save game preview!");
+		return false;
+	}
+	return true;
+}
+
 int SaveGameIterator::CreateSaveGame(int index, bool mqs, Holder<Sprite2D> preview) const
 {
 	AutoTable tab = gamedata->LoadTable("savegame");
@@ -579,13 +592,17 @@ int SaveGameIterator::CreateSaveGame(int index, bool mqs, Holder<Sprite2D> previ
 		qsave = tab->QueryFieldSigned<int>(index, 1);
 	}
 
+	if (int cansave = CanSave())
+		return cansave;
+
+	// Quicksaves and native autosaves do not supply a preview. Capture it before
+	// replacing an existing save, and never pass a null sprite to the image writer.
+	if (!PrepareSavePreview(preview)) return GEM_ERROR;
+
 	if (mqs) {
 		assert(qsave);
 		PruneQuickSave(slotname);
 	}
-
-	if (int cansave = CanSave())
-		return cansave;
 
 	bool overrideRunning = false;
 	//if index is not an existing savegame, we create a unique slotname
@@ -638,6 +655,8 @@ int SaveGameIterator::CreateSaveGame(Holder<SaveGame> save, StringView slotname,
 	if (cannotSave && !force) {
 		return cannotSave;
 	}
+
+	if (!PrepareSavePreview(preview)) return GEM_ERROR;
 
 	int index;
 	bool overrideRunning = false;

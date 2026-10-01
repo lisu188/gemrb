@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Contributors to the GemRB project <https://gemrb.org>
 #
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Compile the production companion binding with controlled actor/map storage."""
+"""Compile companion bindings and area save filtering with controlled storage."""
 import os
 from pathlib import Path
 import subprocess
@@ -10,6 +10,18 @@ import unittest
 from native_harness import run_tests
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def function(source, signature):
+    start = source.index(signature)
+    end = source.index("{", start) + 1
+    depth = 1
+    while depth:
+        depth += (source[end] == "{") - (source[end] == "}")
+        end += 1
+    return source[start:end]
+
+
 BOUNDARIES = r'''
 #include <Python.h>
 #include <algorithm>
@@ -41,11 +53,25 @@ struct Size { Size(int, int) {} };
 constexpr int IE_STATE_ID=0, IE_HITPOINTS=1, IE_EA=2, IE_XPVALUE=3;
 constexpr unsigned STATE_DEAD=0x800, IF_CLEANUP=0x4000;
 constexpr int EA_CONTROLLED=5, SELECT_NORMAL=0;
+struct EffectRef { const char* name; int opcode; };
+struct Effect {
+    unsigned Opcode=187, IsVariable=1, Parameter1=0;
+    ieVariable VariableName;
+};
+struct EffectQueue {
+    std::vector<Effect> effects;
+    static int ResolveEffect(EffectRef&) { return 187; }
+    auto GetFirstEffect() const { return effects.cbegin(); }
+    const Effect* GetNextEffect(std::vector<Effect>::const_iterator& iterator) const {
+        return iterator==effects.cend() ? nullptr : &*iterator++;
+    }
+};
 struct Map;
 struct Actor {
     unsigned id=1001, InParty=0, flags=0;
     std::map<std::string, unsigned> locals;
     std::map<int, unsigned> stats{{IE_HITPOINTS,10}};
+    EffectQueue fxqueue;
     ieVariable name;
     struct { ieVariable origScriptName; } ignoredFields;
     Map* area=nullptr;
@@ -61,6 +87,7 @@ struct Actor {
     Map* GetCurrentArea() const { return area; }
     void SetScriptName(const ieVariable& n) { name=n; }
     void SetPersistent(int v) { persistence=v; }
+    bool Persistent() const { return InParty || persistence>=0; }
     void SetBase(int s, unsigned v) { stats[s]=v; }
     void SetPosition(const Point& p, bool, Size) { Pos=p; }
     void RefreshEffects() {}
@@ -74,6 +101,8 @@ struct Map {
     std::vector<Actor*> actors;
     explicit Map(const char* n): name(n) {}
     Actor* GetActor(const ieVariable& n, int) const { for(auto* a:actors) if(a->name==n) return a; return nullptr; }
+    int GetActorCount(bool any) const;
+    Actor* GetActor(int index, bool any) const;
     void AddActor(Actor* a, bool) { actors.push_back(a); a->area=this; }
     ResRef GetScriptRef() const { return name; }
 } areaA("ar0001"), areaB("ar0002");
@@ -152,12 +181,81 @@ int main(int argc,char** argv) {
         r=invoke(1); assert(!flag(r,"InArea")); Py_DECREF(r); assert(a->area==&areaA);
         r=invoke(1,"pscrbody",3); assert(flag(r,"InArea") && !flag(r,"Created")); Py_DECREF(r);
         assert(a->area==&areaB && a->GetStat(IE_HITPOINTS)==4 && a->Pos.x==70);
+    } else if(test=="reload_unloaded") {
+        PyObject* r=invoke(1,"pscrbody",1); unsigned id=actorId(r); Py_DECREF(r); auto* a=storage.npcs.at(0);
+        unsigned token=a->locals["GMC_TOKEN"];
+        a->locals.clear(); a->area=nullptr;
+        a->fxqueue.effects.push_back({187,1,token,"GMC_TOKEN"});
+        r=invoke(1); assert(actorId(r)==id && !flag(r,"InArea")); Py_DECREF(r);
+        assert(a->area==nullptr && a->locals.empty() && a->fxqueue.effects.size()==1);
+        r=invoke(1,"pscrbody",3); assert(actorId(r)==id && flag(r,"InArea") && !flag(r,"Created")); Py_DECREF(r);
+        assert(storage.npcs.size()==1 && a->objects.LastSummoner==owner.id);
+    } else if(test=="saved_marker_validation") {
+        PyObject* r=invoke(1,"pscrbody",1); Py_DECREF(r); auto* a=storage.npcs.at(0);
+        unsigned token=a->locals["GMC_TOKEN"];
+        a->locals.clear(); a->area=nullptr;
+        a->fxqueue.effects.push_back({187,1,token,"UNRELATED"});
+        rejected(invoke(1));
+        a->fxqueue.effects.push_back({187,0,token,"GMC_TOKEN"});
+        rejected(invoke(1));
+        a->fxqueue.effects.push_back({187,1,token,"GMC_TOKEN"});
+        a->locals["GMC_TOKEN"]=0;
+        rejected(invoke(1));
+        assert(storage.npcs.size()==1 && a->area==nullptr && a->flags==0);
+    } else if(test=="saved_duplicate_owner") {
+        PyObject* r=invoke(1,"pscrbody",1); Py_DECREF(r);
+        other.fxqueue.effects.push_back({187,1,owner.locals["GMC_pscrbody"],"GMC_pscrbody"});
+        rejected(invoke(1,"pscrbody",2));
+        assert(storage.npcs.size()==1);
     } else if(test=="death") {
         PyObject* r=invoke(1,"pscrbody",1); unsigned old=actorId(r); Py_DECREF(r);
         auto* a=storage.npcs.at(0); a->stats[IE_STATE_ID]=STATE_DEAD;
         r=invoke(1,"pscrbody",3); assert(!flag(r,"Alive")); Py_DECREF(r); assert(storage.npcs.size()==1);
         r=invoke(1,"pscrbody",1); assert(flag(r,"Created") && actorId(r)!=old); Py_DECREF(r);
         assert(storage.npcs.size()==1 && (a->flags&IF_CLEANUP) && a->persistence==-1 && a->name.empty());
+    } else if(test=="area_save_filter") {
+        Actor ordinary, corpse, removed, persistent;
+        corpse.stats[IE_STATE_ID]=STATE_DEAD;
+        corpse.stats[IE_HITPOINTS]=0;
+        persistent.SetPersistent(0);
+        for(auto* a:{&ordinary,&removed,&corpse,&persistent}) areaA.AddActor(a,true);
+        removed.DestroySelf();
+        // Retain ordinary corpses and defer removal in the live actor list, but
+        // omit both persistent actors and destroyed actors from the ARE stream.
+        assert(areaA.GetActorCount(true)==6);
+        assert(areaA.GetActorCount(false)==2);
+        assert(areaA.GetActor(0,false)==&ordinary);
+        assert(areaA.GetActor(1,false)==&corpse);
+        assert(areaA.GetActor(2,false)==nullptr);
+        assert(areaA.GetActor(3,true)==&removed);
+    } else if(test=="dismiss_immediate_save") {
+        PyObject* r=invoke(1,"pscrbody",1); Py_DECREF(r); auto* retired=storage.npcs.at(0);
+        r=invoke(2,"pscrbody",1); Py_DECREF(r); auto* retained=storage.npcs.at(1);
+        retained->stats[IE_HITPOINTS]=7;
+        r=invoke(1,"pscrbody",2); assert(r==Py_None); Py_DECREF(r);
+        assert(retired->GetStat(IE_HITPOINTS)==10 && (retired->flags&IF_CLEANUP));
+        assert(retired->name.empty() && retired->ignoredFields.origScriptName.empty());
+        assert(areaA.GetActorCount(true)==4 && storage.npcs.size()==1);
+        assert(areaA.GetActorCount(false)==0 && areaA.GetActor(0,false)==nullptr);
+        r=invoke(2); assert(actorId(r)==retained->id); Py_DECREF(r);
+        assert(retained->GetStat(IE_HITPOINTS)==7 && retained->flags==0);
+    } else if(test=="retired_area_save") {
+        PyObject* r=invoke(1,"pscrbody",1); Py_DECREF(r); auto* dead=storage.npcs.at(0);
+        r=invoke(2,"pscrbody",1); Py_DECREF(r); auto* retained=storage.npcs.at(1);
+        dead->stats[IE_STATE_ID]=STATE_DEAD;
+        dead->stats[IE_HITPOINTS]=0;
+        r=invoke(1,"pscrbody",1); assert(flag(r,"Created")); unsigned replacement=actorId(r); Py_DECREF(r);
+        auto* dismissed=storage.GetActorByGlobalID(replacement);
+        assert(areaA.GetActorCount(true)==5 && storage.npcs.size()==2);
+        assert(areaA.GetActorCount(false)==0 && areaA.GetActor(0,false)==nullptr);
+        r=invoke(1,"pscrbody",2); assert(r==Py_None); Py_DECREF(r);
+        // This is the exact immediate save boundary: dead replaced body and
+        // living dismissed replacement still share the retired owner's token.
+        assert(dead->locals["GMC_TOKEN"]==dismissed->locals["GMC_TOKEN"]);
+        assert((dead->flags&IF_CLEANUP) && (dismissed->flags&IF_CLEANUP));
+        assert(areaA.GetActorCount(true)==5 && storage.npcs.size()==1);
+        assert(areaA.GetActorCount(false)==0 && areaA.GetActor(0,false)==nullptr);
+        assert(storage.npcs.at(0)==retained && retained->flags==0);
     } else if(test=="missing_template") {
         dataStorage.missing=true; rejected(invoke(1,"pscrbody",1));
         assert(owner.locals.empty() && storage.locals.empty() && storage.npcs.empty());
@@ -198,7 +296,13 @@ int main(int argc,char** argv) {
 
 
 def generate_harness():
-    return BOUNDARIES + (ROOT / "plugins/GUIScript/CompanionBindings.h").read_text() + SCENARIOS
+    area = (ROOT / "core/Map.cpp").read_text()
+    saving = "\n".join(function(area, signature) for signature in (
+        "static inline bool MustSave(const Actor* actor)",
+        "int Map::GetActorCount(bool any) const",
+        "Actor* Map::GetActor(int index, bool any) const",
+    ))
+    return BOUNDARIES + saving + (ROOT / "plugins/GUIScript/CompanionBindings.h").read_text() + SCENARIOS
 
 
 class CompanionTests(unittest.TestCase):
@@ -214,7 +318,9 @@ class CompanionTests(unittest.TestCase):
 
 for scenario in ("inspect", "create_recall", "two_owners", "reload", "transition", "death", "missing_template",
                  "registration_failure", "foreign_collision", "marker_mismatch", "duplicate_owner", "registry",
-                 "invalid_input", "owner_unavailable", "dismiss_unloaded"):
+                 "invalid_input", "owner_unavailable", "dismiss_unloaded", "reload_unloaded",
+                 "saved_marker_validation", "saved_duplicate_owner", "area_save_filter",
+                 "dismiss_immediate_save", "retired_area_save"):
     setattr(CompanionTests, "test_" + scenario, lambda self, name=scenario: self.scenario(name))
 
 

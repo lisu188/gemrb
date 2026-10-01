@@ -4,6 +4,27 @@
 
 #include <cstring>
 
+static ieDword CompanionLocal(const Actor* actor, const ieVariable& key)
+{
+	const auto local = actor->locals.find(key);
+	if (local != actor->locals.end()) return local->second;
+
+	// Persistent actors outside loaded areas have not applied their saved local
+	// variable effects yet. Inspect that serialized state without running any
+	// unrelated effects or moving the actor as a side effect of an ownership check.
+	static EffectRef storeLocalRef = { "Variable:StoreLocalVariable", -1 };
+	const int opcode = EffectQueue::ResolveEffect(storeLocalRef);
+	ieDword value = 0;
+	auto iterator = actor->fxqueue.GetFirstEffect();
+	while (const Effect* effect = actor->fxqueue.GetNextEffect(iterator)) {
+		if (opcode >= 0 && effect->Opcode == static_cast<ieDword>(opcode) &&
+		    effect->IsVariable && effect->VariableName == key) {
+			value = effect->Parameter1;
+		}
+	}
+	return value;
+}
+
 static void RetireCompanion(Game* game, Actor* companion)
 {
 	game->SelectActor(companion, false, SELECT_NORMAL);
@@ -49,18 +70,18 @@ static PyObject* GemRB_ManageCompanion(PyObject* /*self*/, PyObject* args)
 	const ResRef resource(creatureName);
 	ieVariable key;
 	key.Format("GMC_{}", resource);
-	ieDword token = actor->GetLocal(key, 0);
+	ieDword token = CompanionLocal(actor, key);
 	const ieDword last = game->GetGlobal("GMC_NEXT", 0);
 	if (last > 0x7fffffff || token > last) return RuntimeError("Invalid companion ownership registry");
 	if (token) {
 		for (int i = 0; i < game->GetPartySize(false); ++i) {
 			const Actor* other = game->GetPC(i, false);
-			if (other != actor && other->GetLocal(key, 0) == token) {
+			if (other != actor && CompanionLocal(other, key) == token) {
 				return RuntimeError("Duplicate companion owner identity");
 			}
 		}
 		for (int i = 0; i < game->GetNPCCount(); ++i) {
-			if (game->GetNPC(i)->GetLocal(key, 0) == token) {
+			if (CompanionLocal(game->GetNPC(i), key) == token) {
 				return RuntimeError("Duplicate companion owner identity");
 			}
 		}
@@ -72,7 +93,7 @@ static PyObject* GemRB_ManageCompanion(PyObject* /*self*/, PyObject* args)
 	if (game->FindPC(name) || (map && map->GetActor(name, 0) && map->GetActor(name, 0) != companion)) {
 		return RuntimeError("Companion script name is already in use");
 	}
-	if (companion && (!token || companion->InParty || companion->GetLocal("GMC_TOKEN", 0) != token)) {
+	if (companion && (!token || companion->InParty || CompanionLocal(companion, "GMC_TOKEN") != token)) {
 		return RuntimeError("Companion ownership marker does not match");
 	}
 	bool created = false;

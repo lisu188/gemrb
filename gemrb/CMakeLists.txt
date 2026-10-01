@@ -219,6 +219,9 @@ IF (BUILD_TESTING)
   ADD_TEST(NAME Test_GUIScripts_BGEELevelup
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/GUIScripts/test_bgee_levelup.py
   )
+  ADD_TEST(NAME Test_GUIScripts_InventoryStore
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/GUIScripts/test_inventory_store.py
+  )
   # Generate from production bodies, then use the configured compiler and
   # Python development library rather than compiling from the test interpreter.
   FUNCTION(ADD_NATIVE_SCRIPT_TEST name script)
@@ -241,7 +244,11 @@ IF (BUILD_TESTING)
   ADD_NATIVE_SCRIPT_TEST(Test_GUIScripts_SpellCastCheck test_spell_cast_check.py
     core/GUI/GameControl.cpp plugins/GUIScript/GUIScript.cpp plugins/GUIScript/PythonCallbacks.h)
   ADD_NATIVE_SCRIPT_TEST(Test_GUIScripts_SaveGame test_save_game.py plugins/GUIScript/GUIScript.cpp)
-  ADD_NATIVE_SCRIPT_TEST(Test_GUIScripts_Companion test_companion.py plugins/GUIScript/CompanionBindings.h)
+  ADD_NATIVE_SCRIPT_TEST(Test_GUIScripts_Companion test_companion.py
+    plugins/GUIScript/CompanionBindings.h core/Map.cpp)
+  ADD_TEST(NAME Test_GUIScripts_CompanionSavedActors
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/GUIScripts/test_companion_saved_actors.py
+  )
   FOREACH(name Test_GUIScripts_SpellCastCheck Test_GUIScripts_SaveGame Test_GUIScripts_Companion)
     TARGET_INCLUDE_DIRECTORIES(${name}_Harness SYSTEM PRIVATE ${PYTHON_INCLUDE_DIRS})
     TARGET_LINK_LIBRARIES(${name}_Harness PRIVATE
@@ -261,6 +268,7 @@ IF (BUILD_TESTING)
   ENDFOREACH()
 
   ADD_NATIVE_SCRIPT_TEST(Test_Core_ItemTypeSchema test_itemtype_schema.py core/Interface.cpp)
+  ADD_NATIVE_SCRIPT_TEST(Test_Core_SavePreview test_save_preview.py core/SaveGameIterator.cpp)
   ADD_NATIVE_SCRIPT_TEST(Test_Core_MonkProgression test_monk_progression.py
     core/GameData.cpp core/Inventory.cpp core/Scriptable/Actor.cpp)
 

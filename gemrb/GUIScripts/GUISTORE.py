@@ -89,7 +89,7 @@ elif GameCheck.IsPST():
 	StoreButtonCount = 7
 else:
 	storebams = ("STORSTOR","STORTVRN","STORINN","STORTMPL","STORBAG","STORBAG")
-	if GameCheck.IsBG1 ():
+	if GameCheck.IsBG1 () or GameCheck.IsBGEE ():
 		strrefs["heal"] = strrefs["buy"]
 Buttons = [-1] * StoreButtonCount
 
