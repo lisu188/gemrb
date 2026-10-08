@@ -8,6 +8,7 @@ on:
       - 'gemrb/core/**'
       - 'gemrb/tests/GUIScripts/*companion*'
       - 'gemrb/CMakeLists.txt'
+      - 'demo/**'
       - '.github/workflows/companion.yml'
   pull_request:
     branches: [master]
@@ -16,6 +17,7 @@ on:
       - 'gemrb/core/**'
       - 'gemrb/tests/GUIScripts/*companion*'
       - 'gemrb/CMakeLists.txt'
+      - 'demo/**'
       - '.github/workflows/companion.yml'
 
 permissions:

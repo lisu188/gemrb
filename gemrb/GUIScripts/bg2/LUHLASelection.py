@@ -286,6 +286,8 @@ def GetHLAs ():
 	# get some needed values
 	Kit = GUICommon.GetKitIndex (pc)
 	IsDual = GUICommon.IsDualClassed (pc)
+	# The low two alignment bits encode good (1), neutral (2), or evil (3).
+	MoralAlignment = GemRB.GetPlayerStat (pc, IE_ALIGNMENT) & 3
 	MaxHLACount = 0
 
 	# reset the abilities
@@ -343,15 +345,15 @@ def GetHLAs ():
 				HLAAbilities.append(SaveArray)
 				continue
 
-			# see if we're alignment restricted (we never get them)
+			# ALIGNMENT_RESTRICT names the excluded moral group.
 			HLAAlign = HLAClassTable.GetValue (j, 8, GTV_STR)
-			if HLAAlign == "ALL_EVIL" and GemRB.GetPlayerStat (pc, IE_ALIGNMENT) < 6:
+			if HLAAlign == "ALL_EVIL" and MoralAlignment == 3:
 				# don't even save this one because we can never get it
-				print("\t\tNeeds ALL_EVIL")
+				print("\t\tExcluded for ALL_EVIL")
 				continue
-			elif HLAAlign == "ALL_GOOD" and GemRB.GetPlayerStat (pc, IE_ALIGNMENT) > 2:
+			elif HLAAlign == "ALL_GOOD" and MoralAlignment == 1:
 				# ditto
-				print("\t\tNeeds ALL_GOOD")
+				print("\t\tExcluded for ALL_GOOD")
 				continue
 
 			# make sure we haven't already surpassed the number of time memorizable

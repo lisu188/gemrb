@@ -26,9 +26,11 @@ are not modified.
 
 Recall and synchronization retain the same living actor, its HP, effects and
 inventory. Dismissal removes the body from the persistent roster and defers
-active-map destruction. Dead-body replacement loads the new resource before
-retiring the old body. Missing resources, invalid owner state, duplicate owner
-identities and foreign name/marker collisions raise an error instead of deleting
+active-map destruction. Actors awaiting destruction are excluded from area saves,
+including saves made immediately after dismissal or replacement. Dead-body
+replacement loads the new resource before retiring the old body. Missing
+resources, invalid owner state, duplicate owner identities and foreign name/marker
+collisions raise an error instead of deleting
 unrelated actors. Owners imported into another save with an inconsistent token
 registry require explicit migration; the binding does not guess a new identity.
 
@@ -39,6 +41,9 @@ Multiple operations are not an engine-wide transaction. A roster-registration
 failure may retain a reserved identity, which a later retry reuses safely.
 
 `gemrb/tests/GUIScripts/test_companion.py` compiles the production binding with
-controlled actor/map storage. Its fifteen scenarios cover ownership, recall,
+controlled actor/map storage. Its scenarios cover ownership, recall,
 injuries, simulated reload/ID changes, area transfer, replacement and failure
-boundaries. These tests do not substitute for actual campaign save/reload tests.
+boundaries, plus exclusion of retired actors from area saves. The native demo
+save/reload check also counts ownership tokens in the saved game and every saved
+area, including unnamed actors. These tests do not substitute for actual campaign
+save/reload tests.

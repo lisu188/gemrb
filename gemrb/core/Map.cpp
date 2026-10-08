@@ -178,7 +178,9 @@ const Color& MapNote::GetColor() const
 //npcs in saved game shouldn't be embedded either
 static inline bool MustSave(const Actor* actor)
 {
-	if (actor->Persistent()) {
+	// DestroySelf defers deletion until the next actor queue update. Its cleanup
+	// flag is not serialized, so embedding the actor would restore it on reload.
+	if (actor->Persistent() || (actor->GetInternalFlag() & IF_CLEANUP)) {
 		return false;
 	}
 
