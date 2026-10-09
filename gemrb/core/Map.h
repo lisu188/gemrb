@@ -286,6 +286,7 @@ private:
 	bool hostilesVisible = false;
 
 	friend class TraversabilityCache;
+	friend class MapTest;
 	TraversabilityCache traversabilityCache;
 
 	VideoBufferPtr wallStencil = nullptr;
@@ -603,6 +604,7 @@ private:
 	Priority SetPriority(Actor* actor, bool& hostilesNew, ieDword gameTime) const;
 	//Actor* GetRoot(int priority, int &index);
 	void DeleteActor(size_t idx);
+	void RemoveActorFromQueues(Actor* actor);
 	//actor uses travel region
 	void UseExit(Actor* pc, InfoPoint* ip);
 	//separated position adjustment, so their order could be randomised
