@@ -38,6 +38,7 @@
 #include "Strings/StringConversion.h"
 #include "Strings/StringMap.h"
 
+#include <list>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -276,6 +277,8 @@ struct LoadGameData {
  */
 
 class GEM_EXPORT Interface {
+	friend class InterfaceTimerTest;
+
 public:
 	using tokens_t = std::unordered_map<ieVariable, String, CstrHashCI>;
 
@@ -343,7 +346,9 @@ private:
 	/** Next Script Name */
 	path_t nextScript;
 
-	std::deque<Timer> timers;
+	// Controls keep timer references, and timer callbacks may append new timers.
+	std::list<Timer> timers;
+	void UpdateTimers(tick_t time);
 	std::unique_ptr<KeyMap> keyMap;
 	Scriptable* CutSceneRunner = nullptr;
 
