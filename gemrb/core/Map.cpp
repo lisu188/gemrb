@@ -487,6 +487,7 @@ void Map::UpdateScripts()
 	size_t q = runQueue.size();
 	while (q--) {
 		Actor* actor = runQueue[q];
+		if (!actor) continue;
 		//actor just moved away, don't run its script from this side
 		if (actor->GetCurrentArea() != this) {
 			continue;
@@ -568,6 +569,7 @@ void Map::UpdateScripts()
 	q = displayQueue.size();
 	while (q--) {
 		Actor* actor = displayQueue[q];
+		if (!actor) continue;
 		actor->fxqueue.Cleanup();
 	}
 
@@ -608,6 +610,7 @@ void Map::UpdateScripts()
 		ieDword exitID = ip->GetGlobalID();
 		while (q--) {
 			Actor* actor = runQueue[q];
+			if (!actor) continue;
 			if (ip->Type == ST_PROXIMITY) {
 				if (ip->Entered(actor)) {
 					// if trap triggered, then mark actor
@@ -799,14 +802,12 @@ Actor* Map::GetNextActor(int& q, size_t& index) const
 	while (true) {
 		switch (Priority(q)) {
 			case Priority::RunScripts:
-				if (index--)
-					return queue[q][index];
-				q--;
-				return nullptr;
 			case Priority::Display:
-				if (index--)
-					return queue[q][index];
-				q--;
+				while (index) {
+					Actor* actor = queue[q][--index];
+					if (actor) return actor;
+				}
+				if (--q < 0) return nullptr;
 				index = queue[q].size();
 				break;
 			default:
@@ -1781,6 +1782,7 @@ void Map::DeleteActor(size_t idx)
 {
 	Actor* actor = actors[idx];
 	if (actor) {
+		RemoveActorFromQueues(actor);
 		actor->Stop(); // just in case
 		Game* game = core->GetGame();
 		//this makes sure that a PC will be demoted to NPC
@@ -2616,6 +2618,7 @@ void Map::GenerateQueues()
 void Map::SortQueues()
 {
 	for (auto& subq : queue) {
+		subq.erase(std::remove(subq.begin(), subq.end(), nullptr), subq.end());
 		std::sort(subq.begin(), subq.end(), [](const Actor* a, const Actor* b) {
 			return b->Pos.y < a->Pos.y;
 		});
@@ -2736,11 +2739,22 @@ bool Map::HasActor(const Actor* actor) const
 	return false;
 }
 
+void Map::RemoveActorFromQueues(Actor* actor)
+{
+	// Scripts can remove actors while an update is traversing these queues.
+	// Preserve indices until the next rebuild, but never retain an actor that
+	// may be deleted before then (drawing also runs while scripts are paused).
+	for (auto& subq : queue) {
+		std::replace(subq.begin(), subq.end(), actor, static_cast<Actor*>(nullptr));
+	}
+}
+
 void Map::RemoveActor(Actor* actor)
 {
 	size_t i = actors.size();
 	while (i--) {
 		if (actors[i] == actor) {
+			RemoveActorFromQueues(actor);
 			//path is invalid outside this area, but actions may be valid
 			actor->ClearPath(true);
 			ClearSearchMapFor(actor);

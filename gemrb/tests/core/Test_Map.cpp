@@ -5,16 +5,18 @@
 // FIXME: remove once fixed, this is excluding non-linux build bots
 #if defined(USE_OPENGL_BACKEND) || (!defined(__APPLE__) && !defined(WIN32))
 
-#include "../../core/GameData.h"
-#include "../../core/Interface.h"
-#include "../../core/InterfaceConfig.h"
-#include "../../core/Logging/Loggers/Stdio.h"
-#include "../../core/Logging/Logging.h"
-#include "../../core/Map.h"
-#include "../../core/PluginMgr.h"
-#include "../../core/SaveGameMgr.h"
+	#include "../../core/GameData.h"
+	#include "../../core/Interface.h"
+	#include "../../core/InterfaceConfig.h"
+	#include "../../core/Logging/Loggers/Stdio.h"
+	#include "../../core/Logging/Logging.h"
+	#include "../../core/Map.h"
+	#include "../../core/PluginMgr.h"
+	#include "../../core/SaveGameMgr.h"
+	#include "../../core/Scriptable/Actor.h"
 
-#include <gtest/gtest.h>
+	#include <algorithm>
+	#include <gtest/gtest.h>
 
 namespace GemRB {
 
@@ -54,10 +56,122 @@ public:
 		core = nullptr;
 		PluginMgr::Get()->RunCleanup();
 	}
+
+protected:
+	std::vector<std::unique_ptr<Actor>> testActors;
+	std::vector<Actor*> savedQueues[int(Priority::Ignore)];
+
+	void SetUp() override
+	{
+		for (int i = 0; i < int(Priority::Ignore); ++i) savedQueues[i] = map->queue[i];
+	}
+
+	void TearDown() override
+	{
+		for (const auto& actor : testActors) {
+			if (actor && map->HasActor(actor.get())) map->RemoveActor(actor.get());
+		}
+		for (int i = 0; i < int(Priority::Ignore); ++i) map->queue[i] = std::move(savedQueues[i]);
+		testActors.clear();
+	}
+
+	Actor* AddTestActor(int y)
+	{
+		auto actor = std::make_unique<Actor>();
+		actor->Pos = Point(1126, y);
+		map->AddActor(actor.get(), true);
+		testActors.push_back(std::move(actor));
+		return testActors.back().get();
+	}
+
+	void DeleteTestActor(Actor* actor)
+	{
+		for (auto& owned : testActors) {
+			if (owned.get() == actor) owned.release();
+		}
+		auto it = std::find(map->actors.begin(), map->actors.end(), actor);
+		ASSERT_NE(it, map->actors.end());
+		map->DeleteActor(size_t(it - map->actors.begin()));
+	}
+
+	static void SetQueues(std::vector<Actor*> run, std::vector<Actor*> display)
+	{
+		map->queue[int(Priority::RunScripts)] = std::move(run);
+		map->queue[int(Priority::Display)] = std::move(display);
+	}
+
+	static size_t QueueSize(Priority priority) { return map->queue[int(priority)].size(); }
+	static Actor* NextActor(int& priority, size_t& index) { return map->GetNextActor(priority, index); }
+	static void SortQueues() { map->SortQueues(); }
+
+	static std::vector<Actor*> DrawableActors()
+	{
+		int priority = int(Priority::Display);
+		size_t index = QueueSize(Priority::Display);
+		std::vector<Actor*> result;
+		while (Actor* actor = NextActor(priority, index)) result.push_back(actor);
+		return result;
+	}
 };
 
 Map* MapTest::map = nullptr;
 std::unique_ptr<Interface> MapTest::gemrb = nullptr;
+
+TEST_F(MapTest, RemovedActorsAreNotDrawnWithoutAnUpdate)
+{
+	Actor* running = AddTestActor(601);
+	Actor* removedRunning = AddTestActor(610);
+	Actor* displayed = AddTestActor(620);
+	Actor* removedDisplayed = AddTestActor(630);
+	SetQueues({ running, removedRunning }, { displayed, removedDisplayed });
+
+	map->RemoveActor(removedRunning);
+	map->RemoveActor(removedDisplayed);
+
+	// Paused gameplay still draws, without UpdateScripts regenerating queues.
+	EXPECT_EQ(DrawableActors(), (std::vector<Actor*> { displayed, running }));
+	EXPECT_EQ(QueueSize(Priority::RunScripts), 2);
+	EXPECT_EQ(QueueSize(Priority::Display), 2);
+	EXPECT_EQ(removedRunning->GetCurrentArea(), nullptr);
+	EXPECT_EQ(removedDisplayed->GetCurrentArea(), nullptr);
+}
+
+TEST_F(MapTest, DeletedActorIsNotReturnedByDrawingQueue)
+{
+	Actor* survivor = AddTestActor(601);
+	Actor* removed = AddTestActor(610);
+	SetQueues({ survivor }, { removed });
+
+	DeleteTestActor(removed);
+
+	EXPECT_EQ(DrawableActors(), (std::vector<Actor*> { survivor }));
+}
+
+TEST_F(MapTest, RemovingActorsPreservesActiveQueueTraversal)
+{
+	Actor* low = AddTestActor(601);
+	Actor* middle = AddTestActor(610);
+	Actor* high = AddTestActor(620);
+	Actor* displayed = AddTestActor(630);
+	SetQueues({ low, middle, high }, { displayed });
+	int priority = int(Priority::Display);
+	size_t index = QueueSize(Priority::Display);
+	ASSERT_EQ(NextActor(priority, index), displayed);
+	ASSERT_EQ(NextActor(priority, index), high);
+
+	// A script can remove both the current actor and an actor still to visit.
+	map->RemoveActor(high);
+	map->RemoveActor(low);
+	map->RemoveActor(displayed);
+	EXPECT_EQ(NextActor(priority, index), middle);
+	EXPECT_EQ(NextActor(priority, index), nullptr);
+	EXPECT_EQ(NextActor(priority, index), nullptr);
+
+	SortQueues();
+	EXPECT_EQ(QueueSize(Priority::RunScripts), 1);
+	EXPECT_EQ(QueueSize(Priority::Display), 0);
+	EXPECT_EQ(DrawableActors(), (std::vector<Actor*> { middle }));
+}
 
 static Point badPaths[] = { Point(1270, 640), Point(1071, 699), Point(1170, 967), Point(1126, 601) };
 static Point goodPaths[] = { Point(1126, 601), Point(685, 655), Point(720, 496), Point(1056, 336) };
