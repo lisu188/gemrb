@@ -31,6 +31,9 @@ public:
 		setlocale(LC_ALL, "");
 		const char* argv[] = { "tester", "-c", "../../tester.cfg" };
 		auto cfg = LoadFromArgs(3, const_cast<char**>(argv));
+		// Demo class/kit tables are empty placeholders. Queue tests need valid
+		// zero-row tables to construct actors, but do not exercise class rules.
+		cfg.ModPath.emplace_back("tests/resources/map_queue");
 		ToggleLogging(true);
 		SetMainLogLevel(DEBUG);
 		AddLogWriter(createStdioLogWriter());
@@ -79,7 +82,9 @@ protected:
 	{
 		auto actor = std::make_unique<Actor>();
 		actor->Pos = Point(1126, y);
-		map->AddActor(actor.get(), true);
+		map->AddActor(actor.get(), false);
+		// Establish membership without applying gameplay equipment/feat effects.
+		actor->Scriptable::SetMap(map);
 		testActors.push_back(std::move(actor));
 		return testActors.back().get();
 	}
