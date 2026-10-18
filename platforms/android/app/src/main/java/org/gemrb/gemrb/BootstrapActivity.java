@@ -2,7 +2,6 @@ package org.gemrb.gemrb;
 
 import android.app.Activity;
 import android.content.Intent;
-import android.content.res.AssetManager;
 import android.net.Uri;
 import android.os.Bundle;
 import android.util.Log;
@@ -21,12 +20,13 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.util.List;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class BootstrapActivity extends Activity {
     private static final String TAG = "GemRB";
-    private static final String RUNTIME_VERSION = "m3-1";
     private static final int REQUEST_IMPORT_GAME = 1001;
     private static final Object RUNTIME_INSTALL_LOCK = new Object();
 
@@ -34,12 +34,15 @@ public final class BootstrapActivity extends Activity {
     private final AtomicBoolean launchStarted = new AtomicBoolean(false);
 
     private TextView statusView;
+    private TextView recoveryView;
+    private Button recoveryDetailsButton;
+    private volatile String recoverySummary = "";
     private Button launchDemoButton;
     private LinearLayout importedGamesLayout;
     private Button importButton;
     private Button cancelButton;
     private volatile File runtimeDir;
-    private volatile AtomicBoolean importCancelled;
+    private volatile ImportCoordinator currentImport;
     private volatile Thread importThread;
 
     @Override
@@ -53,10 +56,8 @@ public final class BootstrapActivity extends Activity {
     @Override
     protected void onDestroy() {
         destroyed.set(true);
-        AtomicBoolean cancellation = importCancelled;
-        if (cancellation != null) {
-            cancellation.set(true);
-        }
+        ImportCoordinator operation = currentImport;
+        if (operation != null) operation.cancel();
         Thread worker = importThread;
         if (worker != null) {
             worker.interrupt();
@@ -86,9 +87,9 @@ public final class BootstrapActivity extends Activity {
         }
 
         setImporting(true);
-        AtomicBoolean cancellation = new AtomicBoolean(false);
-        importCancelled = cancellation;
-        Thread worker = new Thread(() -> importGame(treeUri, cancellation), "GemRB-game-import");
+        ImportCoordinator operation = new ImportCoordinator();
+        currentImport = operation;
+        Thread worker = new Thread(() -> importGame(treeUri, operation), "GemRB-game-import");
         importThread = worker;
         worker.start();
     }
@@ -107,6 +108,9 @@ public final class BootstrapActivity extends Activity {
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
         ));
+
+        recoveryView = new TextView(this);
+        recoveryView.setMaxLines(8);
 
         launchDemoButton = new Button(this);
         launchDemoButton.setText("Launch bundled demo");
@@ -131,13 +135,21 @@ public final class BootstrapActivity extends Activity {
         cancelButton.setText("Cancel import");
         cancelButton.setVisibility(View.GONE);
         cancelButton.setOnClickListener(view -> {
-            AtomicBoolean cancellation = importCancelled;
-            if (cancellation != null) {
-                cancellation.set(true);
-                setStatus("Cancelling import…");
-            }
+            ImportCoordinator operation = currentImport;
+            if (operation != null && operation.cancel()) setStatus("Cancelling import…");
         });
         layout.addView(cancelButton);
+        // Keep recovery details below ordinary controls and collapsed initially.
+        recoveryDetailsButton = new Button(this);
+        recoveryDetailsButton.setText("Show recovery details");
+        recoveryDetailsButton.setVisibility(View.GONE);
+        recoveryDetailsButton.setOnClickListener(view -> {
+            boolean expand = recoveryView.getMaxLines() == 8;
+            recoveryView.setMaxLines(expand ? Integer.MAX_VALUE : 8);
+            recoveryDetailsButton.setText(expand ? "Hide recovery details" : "Show recovery details");
+        });
+        layout.addView(recoveryDetailsButton);
+        layout.addView(recoveryView);
 
         ScrollView scrollView = new ScrollView(this);
         scrollView.setFillViewport(true);
@@ -158,10 +170,12 @@ public final class BootstrapActivity extends Activity {
                 return;
             }
             runtimeDir = preparedRuntime;
-            getSharedPreferences("bootstrap", MODE_PRIVATE)
-                    .edit()
-                    .putString("activeRuntime", preparedRuntime.getAbsolutePath())
-                    .apply();
+            recoverImports();
+            if (!isActivityUsable()) return;
+            if (!getSharedPreferences("bootstrap", MODE_PRIVATE).edit()
+                    .putString("activeRuntime", preparedRuntime.getAbsolutePath()).commit()) {
+                throw new IOException("Cannot activate the prepared runtime");
+            }
             postIfActive(this::showReadyUi);
         } catch (Exception error) {
             fail("Android runtime bootstrap failed", error);
@@ -170,6 +184,7 @@ public final class BootstrapActivity extends Activity {
 
     private void showReadyUi() {
         setStatus("GemRB runtime ready.");
+        displayRecovery();
         launchDemoButton.setVisibility(View.VISIBLE);
         importButton.setVisibility(View.VISIBLE);
         refreshImportedGames();
@@ -197,63 +212,117 @@ public final class BootstrapActivity extends Activity {
         startActivityForResult(intent, REQUEST_IMPORT_GAME);
     }
 
-    private void importGame(Uri treeUri, AtomicBoolean cancellation) {
-        GameImporter.Result result = null;
-        try {
-            result = GameImporter.importTree(
-                    this,
-                    treeUri,
-                    cancellation,
-                    (copied, total, currentName) -> postIfActive(() -> {
-                        if (cancellation.get()) {
-                            return;
-                        }
-                        String progress;
-                        if (total > 0) {
-                            int percent = (int) Math.min(100, (copied * 100L) / total);
-                            progress = String.format(Locale.US, "Importing %d%% — %s", percent, currentName);
-                        } else {
-                            progress = "Importing — " + currentName;
-                        }
-                        setStatus(progress);
-                    })
-            );
+    private void displayRecovery() {
+        recoveryView.setText(recoverySummary);
+        recoveryDetailsButton.setVisibility(recoverySummary.isEmpty() ? View.GONE : View.VISIBLE);
+    }
 
-            if (!isImportUsable(cancellation)) {
-                GameImporter.discardImportedResult(result);
-                return;
-            }
-
-            GameRegistry.add(this, result.gameId, result.displayName);
-            if (beginLaunch(cancellation)) {
-                launchGame(result.gamePath, result.gameId, "auto", cancellation);
-            }
-        } catch (Exception error) {
-            if (cancellation.get() || !isActivityUsable()) {
-                if (result != null) {
-                    try {
-                        GameImporter.discardImportedResult(result);
-                    } catch (IOException cleanupError) {
-                        Log.w(TAG, "Failed to clean cancelled imported game", cleanupError);
-                    }
+    private void recoverImports() throws IOException {
+        File external = getExternalFilesDir(null);
+        if (external == null) throw new IOException("App-specific external storage is unavailable");
+        File journals = ManagedFiles.child(getFilesDir(), "imports");
+        Set<String> registered = new HashSet<>();
+        ImportJournal.Recovery report;
+        synchronized (ImportJournal.LOCK) {
+            for (GameRegistry.Entry entry : GameRegistry.load(this)) registered.add(entry.gameId);
+            report = ImportJournal.recover(external, journals, new ImportJournal.Registry() {
+                public boolean contains(String id) { return registered.contains(id); }
+                public void add(String id, String name) throws IOException {
+                    GameRegistry.add(BootstrapActivity.this, id, name);
+                    registered.add(id);
                 }
-                postIfActive(() -> {
-                    setStatus("Game import cancelled.");
-                    setImporting(false);
-                    refreshImportedGames();
-                });
-            } else {
-                fail("Game import failed", error);
-                postIfActive(() -> {
-                    setImporting(false);
-                    refreshImportedGames();
-                });
-            }
-        } finally {
-            if (importThread == Thread.currentThread()) {
-                importThread = null;
+            });
+        }
+        StringBuilder summary = new StringBuilder();
+        if (report.removedBytes > 0) summary.append("Cleaned verified interrupted copies: ")
+                .append(report.removedBytes).append(" bytes.\n");
+        for (String notice : report.notices) {
+            summary.append(notice).append('\n');
+            Log.i(TAG, notice);
+        }
+        for (String removed : report.removedFiles) Log.i(TAG, "Removed verified copied asset: " + removed);
+        File runtimeRoot = ManagedFiles.child(getFilesDir(), "runtime");
+        File[] runtimes = runtimeRoot.listFiles();
+        if (runtimes != null) {
+            for (File previous : runtimes) {
+                if (runtimeDir == null || !previous.getCanonicalFile().equals(runtimeDir.getCanonicalFile())) {
+                    String notice = "Previous runtime preserved: " + previous;
+                    summary.append(notice).append('\n');
+                    Log.i(TAG, notice);
+                }
             }
         }
+        recoverySummary = summary.toString();
+    }
+
+    private void importGame(Uri treeUri, ImportCoordinator operation) {
+        synchronized (ImportJournal.LOCK) { importGameLocked(treeUri, operation); }
+    }
+
+    private void importGameLocked(Uri treeUri, ImportCoordinator operation) {
+        AtomicBoolean cancellation = operation.cancellation();
+        GameImporter.Result result = null;
+        boolean handedToLaunch = false;
+        Exception failure = null;
+        try {
+            result = GameImporter.importTree(this, treeUri, cancellation,
+                    (copied, total, currentName) -> postIfActive(() -> {
+                        if (cancellation.get()) return;
+                        String progress = total > 0
+                                ? String.format(Locale.US, "Importing %d%% — %s", Math.min(100, copied * 100L / total), currentName)
+                                : "Importing — " + currentName;
+                        setStatus(progress);
+                    }));
+            if (!isActivityUsable()) operation.cancel();
+            final GameImporter.Result imported = result;
+            // Cancellation and registry persistence have one serialized boundary.
+            if (!operation.commit(() -> GameRegistry.add(this, imported.gameId, imported.displayName))) return;
+            synchronized (ImportJournal.LOCK) { result.journal.registered(); }
+            if (beginLaunch(null)) {
+                handedToLaunch = true;
+                launchGame(result.gamePath, result.gameId, "auto", null,
+                        (started, error) -> finishImport(operation, started, error));
+            }
+        } catch (Exception error) {
+            failure = error;
+        } finally {
+            if (!operation.isCommitted() && result != null && !isRegistered(result.gameId)) {
+                try { GameImporter.discardImportedResult(result); }
+                catch (IOException cleanup) {
+                    if (failure == null) failure = cleanup;
+                    else failure.addSuppressed(cleanup);
+                }
+            }
+            if (!handedToLaunch) {
+                try { recoverImports(); }
+                catch (IOException recovery) { Log.w(TAG, "Import recovery requires attention", recovery); }
+                finishImport(operation, false, failure);
+            }
+            if (importThread == Thread.currentThread()) importThread = null;
+        }
+    }
+
+    private boolean isRegistered(String id) {
+        for (GameRegistry.Entry entry : GameRegistry.load(this)) {
+            if (entry.gameId.equals(id)) return true;
+        }
+        return false;
+    }
+
+    private void finishImport(ImportCoordinator operation, boolean started, Exception error) {
+        if (!operation.finish()) return;
+        if (error != null) Log.e(TAG, "Game import/launch failed", error);
+        postIfActive(() -> {
+            if (currentImport != operation || started) return;
+            currentImport = null;
+            launchStarted.set(false);
+            setImporting(false);
+            refreshImportedGames();
+            displayRecovery();
+            if (error != null) setStatus("Game import/launch failed:\n" + error.getMessage());
+            else if (operation.isCommitted()) setStatus("Imported game ready.");
+            else setStatus("Game import cancelled.");
+        });
     }
 
     private void launchDemo() {
@@ -266,7 +335,7 @@ public final class BootstrapActivity extends Activity {
         }
         File demoPath = new File(currentRuntime, "demo");
         new Thread(
-                () -> launchGame(demoPath, "demo-bootstrap", "demo", null),
+                () -> launchGame(demoPath, "demo-bootstrap", "demo", null, this::finishLaunch),
                 "GemRB-demo-launch"
         ).start();
     }
@@ -283,47 +352,46 @@ public final class BootstrapActivity extends Activity {
         }
         GameRegistry.select(this, entry.gameId, entry.displayName);
         new Thread(
-                () -> launchGame(gamePath, entry.gameId, "auto", null),
+                () -> launchGame(gamePath, entry.gameId, "auto", null, this::finishLaunch),
                 "GemRB-game-launch"
         ).start();
     }
 
-    private void launchGame(
-            File gamePath,
-            String saveId,
-            String gameType,
-            AtomicBoolean cancellation
-    ) {
-        if (!isOperationUsable(cancellation)) {
-            return;
-        }
+    private interface LaunchCompletion { void finished(boolean started, Exception error); }
+
+    private void finishLaunch(boolean started, Exception error) {
+        if (error != null) Log.e(TAG, "Cannot launch GemRB", error);
+        if (started) return;
+        postIfActive(() -> {
+            launchStarted.set(false);
+            setImporting(false);
+            refreshImportedGames();
+            setStatus(error == null ? "Launch cancelled." : "Cannot launch GemRB:\n" + error.getMessage());
+        });
+    }
+
+    private void launchGame(File gamePath, String saveId, String gameType,
+                            AtomicBoolean cancellation, LaunchCompletion completion) {
         try {
-            File configFile = writeManagedConfig(runtimeDir, gamePath, saveId, gameType, cancellation);
             if (!isOperationUsable(cancellation)) {
+                completion.finished(false, null);
                 return;
             }
-            getSharedPreferences("bootstrap", MODE_PRIVATE)
-                    .edit()
-                    .putString("configPath", configFile.getAbsolutePath())
-                    .apply();
-            postIfActive(() -> {
+            File configFile = writeManagedConfig(runtimeDir, gamePath, saveId, gameType, cancellation);
+            getSharedPreferences("bootstrap", MODE_PRIVATE).edit()
+                    .putString("configPath", configFile.getAbsolutePath()).apply();
+            runOnUiThread(() -> {
                 if (!isOperationUsable(cancellation)) {
+                    completion.finished(false, null);
                     return;
                 }
-                Intent intent = new Intent(BootstrapActivity.this, GemRBActivity.class);
-                startActivity(intent);
-                finish();
+                try {
+                    startActivity(new Intent(BootstrapActivity.this, GemRBActivity.class));
+                    completion.finished(true, null);
+                    finish();
+                } catch (Exception error) { completion.finished(false, error); }
             });
-        } catch (Exception error) {
-            launchStarted.set(false);
-            if (isOperationUsable(cancellation)) {
-                fail("Cannot launch GemRB", error);
-                postIfActive(() -> {
-                    setImporting(false);
-                    refreshImportedGames();
-                });
-            }
-        }
+        } catch (Exception error) { completion.finished(false, error); }
     }
 
     private boolean beginLaunch(AtomicBoolean cancellation) {
@@ -357,39 +425,15 @@ public final class BootstrapActivity extends Activity {
     }
 
     private File ensureRuntimeLocked() throws IOException {
-        File runtimeRoot = new File(getFilesDir(), "runtime");
-        if (!runtimeRoot.isDirectory() && !runtimeRoot.mkdirs()) {
-            throw new IOException("Cannot create runtime directory");
+        String identity;
+        try (InputStream input = getAssets().open("runtime.sha256")) {
+            identity = RuntimeInstaller.readIdentity(input);
         }
-
-        File runtime = new File(runtimeRoot, RUNTIME_VERSION);
-        File completeMarker = new File(runtime, ".complete");
-        if (completeMarker.isFile()) {
-            validateRuntime(runtime);
-            return runtime;
-        }
-
-        File stagingDir = new File(runtimeRoot, RUNTIME_VERSION + ".tmp");
-        deleteTree(stagingDir);
-        if (!stagingDir.mkdirs()) {
-            throw new IOException("Cannot create runtime staging directory");
-        }
-
-        RuntimeArchive.extract(getAssets(), "runtime.zip", stagingDir);
-        validateRuntime(stagingDir);
-        writeFile(new File(stagingDir, ".complete"), RUNTIME_VERSION + "\n");
-
-        if (runtime.exists()) {
-            deleteTree(runtime);
-        }
-        Files.move(stagingDir.toPath(), runtime.toPath(), StandardCopyOption.ATOMIC_MOVE);
+        File runtimeRoot = ManagedFiles.child(getFilesDir(), "runtime");
+        File runtime = RuntimeInstaller.ensure(runtimeRoot, identity,
+                destination -> RuntimeArchive.extract(getAssets(), "runtime.zip", destination));
+        Log.i(TAG, "GEMRB_ANDROID_RUNTIME_ID=" + identity);
         return runtime;
-    }
-
-    private void validateRuntime(File runtime) throws IOException {
-        requireFile(runtime, "gemrb/GUIScripts/GUICommon.py");
-        requireFile(runtime, "python/lib/python3.14/os.py");
-        requireFile(runtime, "demo/chitin.key");
     }
 
     private File writeManagedConfig(
@@ -402,8 +446,8 @@ public final class BootstrapActivity extends Activity {
         if (runtime == null || gamePath == null || !gamePath.isDirectory()) {
             throw new IOException("Runtime or game path is unavailable");
         }
-        File configDir = new File(getFilesDir(), "config");
-        File cacheDir = new File(getCacheDir(), "gemrb");
+        File configDir = ManagedFiles.child(getFilesDir(), "config");
+        File cacheDir = ManagedFiles.child(getCacheDir(), "gemrb");
         File externalRoot = getExternalFilesDir(null);
         if (externalRoot == null) {
             throw new IOException("App-specific external storage is unavailable");
@@ -411,7 +455,7 @@ public final class BootstrapActivity extends Activity {
 
         File saveDir;
         try {
-            saveDir = GamePaths.savePath(externalRoot, saveId);
+            saveDir = ManagedFiles.child(externalRoot, "saves/" + GamePaths.validateGameId(saveId));
         } catch (IllegalArgumentException error) {
             throw new IOException("Invalid managed game id", error);
         }
@@ -423,8 +467,8 @@ public final class BootstrapActivity extends Activity {
         }
 
         String config = ManagedConfig.build(runtime, gamePath, saveDir, cacheDir, gameType);
-        File target = new File(configDir, "GemRB.cfg");
-        File staging = new File(configDir, "GemRB.cfg.tmp");
+        File target = ManagedFiles.child(configDir, "GemRB.cfg");
+        File staging = ManagedFiles.child(configDir, "GemRB.cfg.tmp");
         writeFile(staging, config);
         if (!isOperationUsable(cancellation)) {
             Files.deleteIfExists(staging.toPath());
@@ -445,15 +489,11 @@ public final class BootstrapActivity extends Activity {
             return null;
         }
         try {
-            return GamePaths.gamePath(externalRoot, gameId);
-        } catch (IllegalArgumentException error) {
-            Log.w(TAG, "Ignoring invalid managed game id", error);
+            return ManagedFiles.child(externalRoot, "games/" + GamePaths.validateGameId(gameId));
+        } catch (IllegalArgumentException | IOException error) {
+            Log.w(TAG, "Ignoring invalid managed game path", error);
             return null;
         }
-    }
-
-    private boolean isImportUsable(AtomicBoolean cancellation) {
-        return cancellation != null && !cancellation.get() && isActivityUsable();
     }
 
     private boolean isOperationUsable(AtomicBoolean cancellation) {
@@ -484,39 +524,6 @@ public final class BootstrapActivity extends Activity {
         statusView.setText(text);
     }
 
-    private static void copyAssetTree(AssetManager assets, String assetPath, File destination) throws IOException {
-        String[] children = assets.list(assetPath);
-        if (children != null && children.length > 0) {
-            if (!destination.isDirectory() && !destination.mkdirs()) {
-                throw new IOException("Cannot create " + destination);
-            }
-            for (String child : children) {
-                copyAssetTree(assets, assetPath + "/" + child, new File(destination, child));
-            }
-            return;
-        }
-
-        File parent = destination.getParentFile();
-        if (parent != null && !parent.isDirectory() && !parent.mkdirs()) {
-            throw new IOException("Cannot create " + parent);
-        }
-        try (InputStream input = assets.open(assetPath);
-             FileOutputStream output = new FileOutputStream(destination)) {
-            byte[] buffer = new byte[64 * 1024];
-            int count;
-            while ((count = input.read(buffer)) != -1) {
-                output.write(buffer, 0, count);
-            }
-        }
-    }
-
-    private static void requireFile(File root, String relativePath) throws IOException {
-        File file = new File(root, relativePath);
-        if (!file.isFile() || file.length() == 0) {
-            throw new IOException("Runtime file missing: " + relativePath);
-        }
-    }
-
     private static File findCaseInsensitive(File directory, String name) {
         File[] children = directory.listFiles();
         if (children == null) {
@@ -537,18 +544,4 @@ public final class BootstrapActivity extends Activity {
         }
     }
 
-    private static void deleteTree(File file) throws IOException {
-        if (!file.exists()) {
-            return;
-        }
-        File[] children = file.listFiles();
-        if (children != null) {
-            for (File child : children) {
-                deleteTree(child);
-            }
-        }
-        if (!file.delete()) {
-            throw new IOException("Cannot delete " + file);
-        }
-    }
 }

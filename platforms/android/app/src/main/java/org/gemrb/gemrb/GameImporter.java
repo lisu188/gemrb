@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
+import java.security.MessageDigest;
 import java.util.Locale;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -27,13 +28,15 @@ final class GameImporter {
         final File gamePath;
         final File savePath;
         final long totalBytes;
+        final ImportJournal journal;
 
-        Result(String gameId, String displayName, File gamePath, File savePath, long totalBytes) {
+        Result(String gameId, String displayName, File gamePath, File savePath, long totalBytes, ImportJournal journal) {
             this.gameId = gameId;
             this.displayName = displayName;
             this.gamePath = gamePath;
             this.savePath = savePath;
             this.totalBytes = totalBytes;
+            this.journal = journal;
         }
     }
 
@@ -45,6 +48,7 @@ final class GameImporter {
     private static final class CopyState {
         long copiedBytes;
         long lastReportedBytes;
+        ImportJournal journal;
     }
 
     private GameImporter() {
@@ -56,6 +60,13 @@ final class GameImporter {
             AtomicBoolean cancelled,
             ProgressListener listener
     ) throws IOException {
+        synchronized (ImportJournal.LOCK) {
+            return importTreeLocked(context, treeUri, cancelled, listener);
+        }
+    }
+
+    private static Result importTreeLocked(Context context, Uri treeUri, AtomicBoolean cancelled,
+                                           ProgressListener listener) throws IOException {
         ContentResolver resolver = context.getContentResolver();
         String rootDocumentId = DocumentsContract.getTreeDocumentId(treeUri);
         Uri rootDocument = DocumentsContract.buildDocumentUriUsingTree(treeUri, rootDocumentId);
@@ -71,12 +82,10 @@ final class GameImporter {
         if (externalRoot == null) {
             throw new IOException("App-specific external storage is unavailable");
         }
-        File gamesRoot = new File(externalRoot, "games");
-        File savesRoot = new File(externalRoot, "saves");
-        if ((!gamesRoot.isDirectory() && !gamesRoot.mkdirs())
-                || (!savesRoot.isDirectory() && !savesRoot.mkdirs())) {
-            throw new IOException("Cannot create managed game/save directories");
-        }
+        File gamesRoot = ManagedFiles.child(externalRoot, "games");
+        File savesRoot = ManagedFiles.child(externalRoot, "saves");
+        ManagedFiles.mkdir(gamesRoot);
+        ManagedFiles.mkdir(savesRoot);
 
         long freeBytes = externalRoot.getUsableSpace();
         long safetyMargin = 64L * 1024L * 1024L;
@@ -87,22 +96,11 @@ final class GameImporter {
         }
 
         String gameId = UUID.randomUUID().toString();
-        File staging = new File(gamesRoot, gameId + ".tmp");
-        File target = GamePaths.gamePath(externalRoot, gameId);
-        File saveStaging = GamePaths.saveStagingPath(externalRoot, gameId);
-        File saveTarget = GamePaths.savePath(externalRoot, gameId);
-        if (target.exists() || saveTarget.exists()) {
-            throw new IOException("Generated managed game id already exists");
-        }
-        deleteTree(staging);
-        deleteTree(saveStaging);
-        if (!staging.mkdirs() || !saveStaging.mkdirs()) {
-            throw new IOException("Cannot create game import staging directories");
-        }
-
+        File journals = ManagedFiles.child(context.getFilesDir(), "imports");
+        ImportJournal journal = ImportJournal.begin(externalRoot, journals, gameId, displayName, treeUri.toString());
+        File staging = journal.gameStaging;
         CopyState copyState = new CopyState();
-        boolean gamePromoted = false;
-        boolean savesPromoted = false;
+        copyState.journal = journal;
         try {
             copyTree(
                     resolver,
@@ -119,53 +117,22 @@ final class GameImporter {
                 throw new IOException("Imported game failed chitin.key validation");
             }
 
-            migrateImportedSaveDirectories(staging, saveStaging);
+            migrateImportedSaveDirectories(staging, journal.saveStaging);
             checkCancelled(cancelled);
-
-            Files.move(staging.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE);
-            gamePromoted = true;
-            checkCancelled(cancelled);
-
-            Files.move(saveStaging.toPath(), saveTarget.toPath(), StandardCopyOption.ATOMIC_MOVE);
-            savesPromoted = true;
+            journal.setPhase(ImportJournal.Phase.COPIED);
+            journal.promote();
             checkCancelled(cancelled);
         } catch (Exception error) {
-            deleteTree(staging);
-            deleteTree(saveStaging);
-            if (savesPromoted) {
-                deleteTree(saveTarget);
-            }
-            if (gamePromoted) {
-                deleteTree(target);
-            }
-            if (error instanceof IOException) {
-                throw (IOException) error;
-            }
+            try { journal.abort(); }
+            catch (IOException cleanup) { error.addSuppressed(cleanup); }
+            if (error instanceof IOException) throw (IOException) error;
             throw new IOException("Game import failed", error);
         }
-
-        return new Result(gameId, displayName, target, saveTarget, scan.totalBytes);
+        return new Result(gameId, displayName, journal.gameTarget, journal.saveTarget, scan.totalBytes, journal);
     }
 
     static void discardImportedResult(Result result) throws IOException {
-        IOException failure = null;
-        try {
-            deleteTree(result.gamePath);
-        } catch (IOException error) {
-            failure = error;
-        }
-        try {
-            deleteTree(result.savePath);
-        } catch (IOException error) {
-            if (failure == null) {
-                failure = error;
-            } else {
-                failure.addSuppressed(error);
-            }
-        }
-        if (failure != null) {
-            throw failure;
-        }
+        synchronized (ImportJournal.LOCK) { result.journal.abort(); }
     }
 
     private static void migrateImportedSaveDirectories(File gameStaging, File saveStaging) throws IOException {
@@ -181,7 +148,7 @@ final class GameImporter {
             if (destinationName == null) {
                 continue;
             }
-            File destination = new File(saveStaging, destinationName);
+            File destination = ManagedFiles.child(saveStaging, destinationName);
             if (destination.exists()) {
                 throw new IOException("Duplicate imported save directory: " + destinationName);
             }
@@ -298,6 +265,8 @@ final class GameImporter {
             CopyState state,
             ProgressListener listener
     ) throws IOException {
+        if (ManagedFiles.exists(destination)) throw new IOException("Duplicate imported file: " + destination.getName());
+        MessageDigest digest = ManagedFiles.sha256();
         try (InputStream input = resolver.openInputStream(source);
              FileOutputStream output = new FileOutputStream(destination)) {
             if (input == null) {
@@ -308,6 +277,7 @@ final class GameImporter {
             while ((count = input.read(buffer)) != -1) {
                 checkCancelled(cancelled);
                 output.write(buffer, 0, count);
+                digest.update(buffer, 0, count);
                 state.copiedBytes += count;
                 if (listener != null
                         && (state.copiedBytes - state.lastReportedBytes >= 16L * 1024L * 1024L
@@ -316,7 +286,9 @@ final class GameImporter {
                     listener.onProgress(state.copiedBytes, totalBytes, destination.getName());
                 }
             }
+            output.getFD().sync();
         }
+        state.journal.copied(destination, ManagedFiles.hex(digest.digest()));
     }
 
     private static String queryDisplayName(ContentResolver resolver, Uri documentUri) throws IOException {
@@ -336,12 +308,7 @@ final class GameImporter {
                 || displayName.indexOf('/') >= 0 || displayName.indexOf('\\') >= 0) {
             throw new IOException("Invalid document name in selected tree");
         }
-        File child = new File(parent, displayName);
-        String parentPath = parent.getCanonicalPath() + File.separator;
-        if (!child.getCanonicalPath().startsWith(parentPath)) {
-            throw new IOException("Document path escapes managed game directory");
-        }
-        return child;
+        return ManagedFiles.child(parent, displayName);
     }
 
     private static File findCaseInsensitive(File directory, String name) {
@@ -360,21 +327,6 @@ final class GameImporter {
     private static void checkCancelled(AtomicBoolean cancelled) throws IOException {
         if (cancelled.get()) {
             throw new IOException("Game import cancelled");
-        }
-    }
-
-    private static void deleteTree(File file) throws IOException {
-        if (!file.exists()) {
-            return;
-        }
-        File[] children = file.listFiles();
-        if (children != null) {
-            for (File child : children) {
-                deleteTree(child);
-            }
-        }
-        if (!file.delete()) {
-            throw new IOException("Cannot delete " + file);
         }
     }
 

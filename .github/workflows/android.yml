@@ -43,7 +43,7 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Test Android path isolation
+      - name: Test Android storage, recovery and cancellation
         shell: bash
         run: |
           set -euo pipefail
@@ -52,8 +52,14 @@ jobs:
           javac -d /tmp/gemrb-android-java-test \
             platforms/android/app/src/main/java/org/gemrb/gemrb/GamePaths.java \
             platforms/android/app/src/main/java/org/gemrb/gemrb/ManagedConfig.java \
-            platforms/android/tests/org/gemrb/gemrb/GamePathsTest.java
+            platforms/android/app/src/main/java/org/gemrb/gemrb/ManagedFiles.java \
+            platforms/android/app/src/main/java/org/gemrb/gemrb/RuntimeInstaller.java \
+            platforms/android/app/src/main/java/org/gemrb/gemrb/ImportCoordinator.java \
+            platforms/android/app/src/main/java/org/gemrb/gemrb/ImportJournal.java \
+            platforms/android/tests/org/gemrb/gemrb/GamePathsTest.java \
+            platforms/android/tests/org/gemrb/gemrb/BootstrapStorageTest.java
           java -cp /tmp/gemrb-android-java-test org.gemrb.gemrb.GamePathsTest
+          java -cp /tmp/gemrb-android-java-test org.gemrb.gemrb.BootstrapStorageTest
 
       - uses: android-actions/setup-android@v3
         with:
@@ -87,7 +93,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          gradle :app:assembleDebug -PgemrbAbi="${GEMRB_ANDROID_ABI}" --stacktrace --info 2>&1 | tee "$GITHUB_WORKSPACE/android-build-${GEMRB_ANDROID_ABI}.log"
+          gradle :app:assembleDebug :app:assembleDebugAndroidTest -PgemrbAbi="${GEMRB_ANDROID_ABI}" --stacktrace --info 2>&1 | tee "$GITHUB_WORKSPACE/android-build-${GEMRB_ANDROID_ABI}.log"
 
       - name: Upload Android build log
         if: always()
@@ -108,6 +114,13 @@ jobs:
           path: platforms/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: ignore
 
+      - uses: actions/upload-artifact@v4
+        if: matrix.abi == 'x86_64'
+        with:
+          name: gemrb-android-x86_64-bootstrap-tests
+          path: platforms/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+          if-no-files-found: error
+
   x86_64-emulator-smoke:
     name: x86_64 emulator smoke
     needs: android-debug
@@ -120,6 +133,11 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: gemrb-android-x86_64-debug
+          path: android-artifact
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: gemrb-android-x86_64-bootstrap-tests
           path: android-artifact
 
       - name: Enable KVM group permissions
@@ -137,7 +155,17 @@ jobs:
           target: default
           emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -no-boot-anim -camera-back none
           disable-animations: true
-          script: GEMRB_ANDROID_SMOKE_LOG="$GITHUB_WORKSPACE/gemrb-emulator.log" GEMRB_ANDROID_SMOKE_SCREENSHOT="$GITHUB_WORKSPACE/gemrb-emulator.png" bash platforms/android/scripts/smoke-emulator.sh android-artifact/app-debug.apk
+          script: |
+            GEMRB_ANDROID_BOOTSTRAP_LOG="$GITHUB_WORKSPACE/gemrb-bootstrap-regressions.log" bash platforms/android/scripts/bootstrap-emulator.sh android-artifact/app-debug.apk android-artifact/app-debug-androidTest.apk
+            GEMRB_ANDROID_SMOKE_LOG="$GITHUB_WORKSPACE/gemrb-emulator.log" GEMRB_ANDROID_SMOKE_SCREENSHOT="$GITHUB_WORKSPACE/gemrb-emulator.png" bash platforms/android/scripts/smoke-emulator.sh android-artifact/app-debug.apk
+
+      - name: Upload bootstrap regression log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gemrb-android-x86_64-bootstrap-log
+          path: gemrb-bootstrap-regressions.log
+          if-no-files-found: warn
 
       - name: Upload emulator log
         if: always()
