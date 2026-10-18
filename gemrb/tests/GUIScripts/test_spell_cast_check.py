@@ -35,13 +35,27 @@ BOUNDARIES = r'''
 #include <Python.h>
 #include <cassert>
 #include <functional>
+#include <iomanip>
 #include <iostream>
+#include <map>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
 using ieDword = unsigned int;
-using ResRef = std::string;
+using StringView = std::string;
+struct ResRef : std::string {
+    using std::string::string;
+    ResRef(const std::string& text) : std::string(text) {}
+    bool IsEmpty() const { return empty(); }
+    void Reset() { clear(); }
+    void Format(const char*, const StringView& prefix, int number) {
+        std::ostringstream text;
+        text << prefix << std::setfill('0') << std::setw(3) << number;
+        assign(text.str());
+    }
+};
 using String = std::string;
 template<class T> using Holder = std::shared_ptr<T>;
 constexpr int GA_POINT=1, GA_NO_DEAD=2, GA_NO_HIDDEN=4, GA_NO_UNSCHEDULED=8;
@@ -50,19 +64,57 @@ enum class TargetMode { None, Cast };
 namespace SpecialSpell { constexpr int AreaTarget=1; }
 constexpr int TARGET_INVALID=0, TARGET_SELF=1, TARGET_NONE=2, TARGET_AREA=3,
               TARGET_CREA=4, TARGET_DEAD=5, TARGET_INV=6;
-constexpr int MESSAGE=0, ERROR=1;
+constexpr int MESSAGE=0, ERROR=1, WARNING=2;
+constexpr int SC_NO_DEAD=1, SC_RANGE_CHECK=2, SC_DEPLETE=4, SC_SETLEVEL=8,
+              SC_INSTANT=16, SC_AURA_CHECK=32, SC_NOINTERRUPT=64;
+constexpr int ST_ACTOR=1, ST_DOOR=2, IE_STATE_ID=0, IE_AVATARREMOVAL=1;
+constexpr int STATE_DEAD=1, IF_ACTIVE=1, IF_VISIBLE=2;
+constexpr int SF_TARGETS_INVISIBLE=1, SF_NO_LOS=2, IE_ANI_READY=0;
+namespace AUTOPAUSE { constexpr int NOTARGET=0; }
+namespace GFFlags { constexpr int RULES_3ED=0; }
+enum class Modal { None };
+namespace MNT { constexpr int FinalDistance=0; }
 namespace HCStrings { constexpr int NoSeeNoCast=0; }
 namespace GUIColors { constexpr int RED=0; }
 namespace fmt { struct WideToChar { String value; }; }
 template<class... T> void Log(T...) {}
-struct Point { int x=0, y=0; };
+struct Point { int x=0, y=0; bool IsInvalid() const { return false; } };
 struct Action {
     inline static int live = 0;
     Action() { ++live; }
     ~Action() { --live; }
     ResRef resref0Parameter;
     Point pointParameter;
-    int int0Parameter=0, int1Parameter=0, int2Parameter=0;
+    int int0Parameter=0, int1Parameter=0, int2Parameter=0, actionID=0;
+};
+struct Actor;
+using SearchmapPoint = Point;
+struct Map {
+    bool visible=true;
+    bool IsVisibleLOS(const Point&, const Point&, const Actor*) const { return visible; }
+} area;
+struct Scriptable {
+    int Type=ST_ACTOR, CurrentActionTicks=0, CurrentActionState=0, SpellHeader=-1;
+    bool CurrentActionInterruptible=true, aura=false;
+    unsigned id=4242;
+    Point Pos, SMPos;
+    ResRef SpellResRef;
+    Action* CurrentAction=nullptr;
+    struct { unsigned LastMarkedSpell=0, LastSpellTarget=0; Point LastTargetPos; } objects;
+    template<class T> static T* As(Scriptable* sender) {
+        return sender && sender->Type==ST_ACTOR ? static_cast<T*>(sender) : nullptr;
+    }
+    unsigned GetGlobalID() const { return id; }
+    unsigned GetInternalFlag() const { return IF_ACTIVE | IF_VISIBLE; }
+    Map* GetCurrentArea() const { return &area; }
+    bool AuraPolluted() const { return aura; }
+    void SetSpellResRef(const ResRef& spell) { SpellResRef=spell; }
+    void ReleaseCurrentAction() { CurrentAction=nullptr; CurrentActionTicks=CurrentActionState=0; }
+    void AddTrigger(int) {}
+    int CastSpell(Scriptable*, bool, bool, bool, int);
+    int CastSpellPoint(const Point&, bool, bool, bool, int);
+    void CastSpellEnd(int, bool);
+    void CastSpellPointEnd(int, bool);
 };
 struct CREMemorizedSpell { ResRef SpellResRef="actual"; };
 struct SpellExtHeader {
@@ -85,13 +137,20 @@ struct Spellbook {
     void FindSpellInfo(SpellExtHeader& out, const ResRef&, int) const { out=info; }
 };
 struct PCStatsType { ResRef QuickSpells[1]; int QuickSpellBookType[1]={1}; };
-struct Actor {
+struct Actor : Scriptable {
     unsigned int InParty=1;
     Spellbook spellbook;
     PCStatsType* PCStats=nullptr;
     bool untargetable=false;
+    bool immobile=false, moving=false;
     std::vector<Holder<Action>> actions;
-    unsigned int GetGlobalID() const { return 4242; }
+    bool Immobile() const { return immobile; }
+    bool InMove() const { return moving; }
+    int GetStat(int) const { return 0; }
+    bool IsInvisibleTo(const Scriptable*, int) const { return false; }
+    void SetStance(int) {}
+    void SetOrientation(const Point&, const Point&, bool) {}
+    void SetModal(Modal) {}
     bool Untargetable(const ResRef&, const Actor*) const { return untargetable; }
     void Stop() {}
     void AddAction(Action* action) { actions.emplace_back(action); }
@@ -99,10 +158,23 @@ struct Actor {
 static Action* GenerateAction(std::string) { return new Action; }
 static Action* GenerateActionDirect(std::string, const Actor*) { return new Action; }
 struct Display {
-    void DisplayConstantStringName(int, int, Actor*) {}
+    void DisplayConstantStringName(int, int, Scriptable*) {}
 } displayStorage;
 Display* displaymsg=&displayStorage;
-struct GameData { int GetSpecialSpell(const ResRef&) const { return 0; } } gameDataStorage;
+struct Spell { unsigned Flags=0; int header=0, duration=2; };
+struct GameData {
+    std::map<std::string, Spell> spells{{"base", {}}, {"SPWI101", {}}, {"variant", {0, 2, 2}}};
+    int loads=0, releases=0;
+    int GetSpecialSpell(const ResRef&) const { return 0; }
+    bool Exists(const ResRef& name, int) const { return name=="broken" || spells.count(name); }
+    const Spell* GetSpell(const ResRef& name, bool=false) {
+        ++loads;
+        auto spell=spells.find(name);
+        return spell==spells.end() ? nullptr : &spell->second;
+    }
+    void FreeSpell(const Spell*, const ResRef&, bool) { ++releases; }
+} gameDataStorage;
+constexpr int IE_SPL_CLASS_ID=0;
 GameData* gamedata=&gameDataStorage;
 struct GameControl {
     std::function<bool(ieDword, const ResRef&)> spellCastCheck;
@@ -130,6 +202,10 @@ struct Dictionary { int Get(const char*, int fallback) const { return fallback; 
 struct Core {
     int applied=0;
     ResRef appliedSpell;
+    bool third=false;
+    bool HasFeature(int) const { return third; }
+    GameControl* GetGameControl() const { return &control; }
+    void Autopause(int, Scriptable*) {}
     Dictionary GetDictionary() const { return {}; }
     String GetString(int) const { return {}; }
     void ApplySpell(const ResRef& spell, Actor*, Actor*, int) { ++applied; appliedSpell=spell; }
@@ -144,8 +220,49 @@ static PyObject* RuntimeError(const char* message) {
     return nullptr;
 }
 static ResRef ResRefFromPy(PyObject* value) {
-    const char* text=PyUnicode_AsUTF8(value);
-    return text ? ResRef(text) : ResRef();
+    // Match the production strict ASCII conversion, including its error state.
+    PyObject* encoded=PyUnicode_AsEncodedString(value,"ascii","strict");
+    if (!encoded) return {};
+    ResRef result(PyBytes_AsString(encoded));
+    Py_DECREF(encoded);
+    return result;
+}
+static unsigned distanceToTarget=0;
+static Actor victim;
+static bool interrupted=false;
+static unsigned GetSpellDistance(const ResRef&, Scriptable*, const Point& = {}) { return 10; }
+static unsigned PersonalDistance(const Scriptable*, const Scriptable*) { return distanceToTarget; }
+static unsigned PersonalDistance(const Point&, const Scriptable*) { return distanceToTarget; }
+template<class... T> static void MoveNearerTo(T...) {}
+static Scriptable* GetStoredActorFromObject(Scriptable*, Action*, int) { return &victim; }
+static int TriggerEntry(int, unsigned) { return 0; }
+constexpr int trigger_targetunreachable=0;
+static bool InterruptSpellcasting(Scriptable*) { return interrupted; }
+struct CastRecord { ResRef spell; int header, level; bool point, deplete; };
+static std::vector<CastRecord> started, finished;
+int Scriptable::CastSpell(Scriptable* target, bool deplete, bool instant, bool, int level) {
+    const Spell* spell=gamedata->GetSpell(SpellResRef);
+    assert(spell); // forced casts rely on the acceptance boundary validating this
+    SpellHeader=spell->header;
+    objects.LastSpellTarget=target->GetGlobalID();
+    started.push_back({SpellResRef, SpellHeader, level, false, deplete});
+    int duration=instant ? 0 : spell->duration;
+    gamedata->FreeSpell(spell, SpellResRef, false);
+    return duration;
+}
+int Scriptable::CastSpellPoint(const Point&, bool deplete, bool instant, bool noInterrupt, int level) {
+    int duration=CastSpell(&victim,deplete,instant,noInterrupt,level);
+    objects.LastSpellTarget=0;
+    started.back().point=true;
+    return duration;
+}
+void Scriptable::CastSpellEnd(int level, bool) {
+    finished.push_back({SpellResRef, SpellHeader, level, false, false});
+    SpellResRef.Reset();
+}
+void Scriptable::CastSpellPointEnd(int level, bool keepStance) {
+    CastSpellEnd(level, keepStance);
+    finished.back().point=true;
 }
 '''
 
@@ -182,12 +299,104 @@ static void checkEvents(const char* expected) {
     PyObject* result=PyRun_String(expected, Py_eval_input, globals, globals);
     assert(result && PyObject_IsTrue(result)); Py_DECREF(result);
 }
+static void scriptCast(bool point, Action& action, int flags) {
+    if (point) SpellPointCore(&caster,&action,flags);
+    else SpellCore(&caster,&action,flags);
+}
+static void finishCast(bool point, Action& action, int flags) {
+    for (int tick=0; caster.CurrentAction && tick<8; ++tick) {
+        ++caster.CurrentActionTicks;
+        scriptCast(point,action,flags);
+    }
+    assert(!caster.CurrentAction);
+}
+static void scriptScenario(const std::string& test) {
+    caster.InParty=0;
+    victim.id=43;
+    const bool point=test.find("point")!=std::string::npos;
+    const bool marked=test.find("marked")!=std::string::npos;
+    const bool numeric=marked || test.find("numeric")!=std::string::npos;
+    const bool instant=test.find("instant")!=std::string::npos;
+    const bool pending=test.find("pending")!=std::string::npos;
+    const bool native=test.find("native")!=std::string::npos;
+    const bool party=test.find("party")!=std::string::npos;
+    const bool invalid=test.find("invalid")!=std::string::npos;
+    const bool vetoed=test.find("veto")!=std::string::npos;
+    core->third=marked; // SpellCore caches this for each process, like the real engine
+    if (!native) {
+        installNonParty(invalid
+            ? "events=[]\ndef check(actor,spell):\n events.append((actor,spell)); return 'missing'\n"
+            : vetoed ? veto
+            : "events=[]\ndef check(actor,spell):\n events.append((actor,spell)); return 'variant'\n");
+    }
+    if (party) caster.InParty=1;
+    Action action;
+    action.resref0Parameter=numeric ? "" : "SPWI101";
+    action.int0Parameter=numeric ? (marked ? 0 : 2101) : 7;
+    action.int1Parameter=11;
+    const ResRef originalResource=action.resref0Parameter;
+    const int originalNumber=action.int0Parameter;
+    const int expectedLevel=numeric ? 11 : 7;
+    const int flags=SC_SETLEVEL | SC_NOINTERRUPT | SC_RANGE_CHECK | SC_AURA_CHECK |
+        (instant ? SC_INSTANT : 0);
+    caster.objects.LastMarkedSpell=2101;
+    caster.CurrentAction=&action;
+    if (pending) {
+        distanceToTarget=100;
+        scriptCast(point,action,flags);
+        assert(calls()==0 && started.empty());
+        ++caster.CurrentActionTicks;
+        distanceToTarget=0;
+        area.visible=false;
+        scriptCast(point,action,flags);
+        assert(calls()==0 && started.empty());
+        ++caster.CurrentActionTicks;
+        area.visible=true;
+        caster.aura=true;
+        scriptCast(point,action,flags);
+        assert(calls()==0 && started.empty());
+        ++caster.CurrentActionTicks;
+        caster.aura=false;
+    }
+    scriptCast(point,action,flags);
+    if (invalid || vetoed) {
+        assert(!caster.CurrentAction && started.empty() && finished.empty());
+        assert(calls()==1);
+        return;
+    }
+    const ResRef expected=native || party ? "SPWI101" : "variant";
+    assert(started.size()==1 && started.back().spell==expected);
+    assert(started.back().level==expectedLevel && started.back().point==point);
+    if (marked) caster.objects.LastMarkedSpell=0; // accepted casts must not re-read a new mark
+    finishCast(point,action,flags);
+    assert(finished.size()==1 && finished.back().spell==expected);
+    assert(finished.back().header==started.back().header && finished.back().level==expectedLevel);
+    assert(finished.back().point==point);
+    if (!native) {
+        assert(calls()==(party ? 0 : 1));
+        if (!party) checkEvents("events == [(4242,'SPWI101')]");
+    }
+    // Scripts retain their Action objects. Reuse the exact same object with
+    // a different callback result and verify it still starts from the original.
+    assert(action.resref0Parameter==originalResource && action.int0Parameter==originalNumber);
+    assert(action.int1Parameter==11);
+    control.SetNonPartySpellCastCheck(nullptr);
+    caster.objects.LastMarkedSpell=2101;
+    caster.CurrentAction=&action;
+    scriptCast(point,action,flags);
+    finishCast(point,action,flags);
+    assert(started.size()==2 && finished.size()==2);
+    assert(started.back().spell=="SPWI101" && finished.back().spell=="SPWI101");
+    assert(started.back().level==expectedLevel && finished.back().level==expectedLevel);
+}
 int main(int argc, char** argv) {
     assert(argc==2);
     Py_Initialize();
     globals=PyModule_GetDict(PyImport_AddModule("__main__"));
     const std::string test=argv[1];
-    if (test=="unchanged") {
+    if (test.rfind("script_",0)==0) {
+        scriptScenario(test);
+    } else if (test=="unchanged") {
         cast(TARGET_SELF); assert(caster.actions.size()==1);
         cast(TARGET_NONE); assert(core->applied==1);
         cast(TARGET_AREA); assert(caster.actions.size()==1);
@@ -276,8 +485,10 @@ int main(int argc, char** argv) {
         caster.InParty=0;
         installNonParty("events=[]\ndef check(actor,spell):\n events.append((actor,spell)); return 'variant'\n");
         ResRef spell="base";
+        const int loads=gamedata->loads, releases=gamedata->releases;
         assert(control.CheckNonPartySpellCast(&caster, spell));
         assert(spell=="variant");
+        assert(gamedata->loads==loads+1 && gamedata->releases==releases+1);
         checkEvents("events == [(4242,'base')]");
         caster.InParty=1;
         spell="party";
@@ -295,6 +506,40 @@ int main(int argc, char** argv) {
         installNonParty("class BadBool:\n def __bool__(self): raise RuntimeError('npc truth veto')\ndef check(*args): return BadBool()\n");
         assert(!control.CheckNonPartySpellCast(&caster, spell));
         assert(!PyErr_Occurred());
+    } else if (test=="nonparty_results") {
+        caster.InParty=0;
+        installNonParty(allow);
+        ResRef spell="base";
+        const int loads=gamedata->loads;
+        assert(control.CheckNonPartySpellCast(&caster,spell) && spell=="base");
+        assert(calls()==1 && gamedata->loads==loads);
+        installNonParty("def check(actor,spell): return None\n");
+        assert(!control.CheckNonPartySpellCast(&caster,spell) && spell=="base");
+        assert(!PyErr_Occurred());
+    } else if (test=="nonparty_invalid") {
+        caster.InParty=0;
+        for (const char* result : {"''", "'missing'", "'broken'", "'\\u2603'"}) {
+            std::string callback="def check(actor,spell): return ";
+            installNonParty((callback+result+"\n").c_str());
+            ResRef spell="base";
+            assert(!control.CheckNonPartySpellCast(&caster,spell));
+            assert(spell=="base" && !PyErr_Occurred());
+        }
+        // Native callbacks have the same boundary: failed candidates must not
+        // escape to forced casts that omit CanCast's resource checks.
+        control.SetNonPartySpellCastCheck([](ieDword,const ResRef&,ResRef& out) {
+            out="missing"; return true;
+        });
+        ResRef spell="base";
+        assert(!control.CheckNonPartySpellCast(&caster,spell) && spell=="base");
+        control.SetNonPartySpellCastCheck([](ieDword,const ResRef&,ResRef& out) {
+            out="variant"; return false;
+        });
+        assert(!control.CheckNonPartySpellCast(&caster,spell) && spell=="base");
+        control.SetNonPartySpellCastCheck([](ieDword,const ResRef&,ResRef& out) {
+            out.Reset(); return true;
+        });
+        assert(!control.CheckNonPartySpellCast(&caster,spell) && spell=="base");
     } else if (test=="lifetime") {
         install(allow);
         PyObject* callback=PyDict_GetItemString(globals,"check");
@@ -331,6 +576,7 @@ def generate_harness():
     game_control = (ROOT / "core/GUI/GameControl.cpp").read_text()
     gui_script = (ROOT / "plugins/GUIScript/GUIScript.cpp").read_text()
     callbacks = (ROOT / "plugins/GUIScript/PythonCallbacks.h").read_text()
+    scripts = (ROOT / "core/GameScript/GSUtils.cpp").read_text()
     pieces = [BOUNDARIES]
     # Keep the production CPython ownership/error handling, not a fake callback.
     pieces.append(callbacks[callbacks.index("template<typename R>"):callbacks.index("template<class R, class ARG_T>")])
@@ -355,6 +601,17 @@ def generate_harness():
     pieces.append(function(gui_script, "static PyObject* GemRB_SetSpellCastCheck("))
     pieces.append(function(gui_script, "static PyObject* GemRB_SetNonPartySpellCastCheck("))
     pieces.append(function(gui_script, "static PyObject* GemRB_SpellCast("))
+    # Exercise the complete production action state machines, including the
+    # later ticks that consume an accepted replacement and its header/level.
+    prefixes = next(line for line in scripts.splitlines() if line.startswith("static const StringView spell_suffices"))
+    pieces.append(prefixes)
+    for signature in (
+        "bool ResolveSpellName(",
+        "void ResolveSpellName(",
+        "void SpellCore(",
+        "void SpellPointCore(",
+    ):
+        pieces.append(function(scripts, signature))
     pieces.append(SCENARIOS)
     return "\n".join(pieces)
 
@@ -381,18 +638,24 @@ class SpellCastCheckTests(unittest.TestCase):
     def test_python_and_truth_conversion_exceptions_fail_closed(self): self.scenario("exceptions")
     def test_nonparty_callback_can_substitute_and_skips_party(self): self.scenario("nonparty_substitution")
     def test_nonparty_callback_veto_and_exceptions_fail_closed(self): self.scenario("nonparty_veto")
-    def test_nonparty_hook_runs_at_script_acceptance_boundary(self):
-        source = (ROOT / "core/GameScript/GSUtils.cpp").read_text()
-        actor_cast = function(source, "void SpellCore(")
-        point_cast = function(source, "void SpellPointCore(")
-        for body, cast_call in (
-            (actor_cast, "Sender->CastSpell("),
-            (point_cast, "Sender->CastSpellPoint("),
-        ):
-            self.assertIn("parameters->int2Parameter && act && !act->InParty", body)
-            hook = body.index("CheckNonPartySpellCast")
-            self.assertLess(body.index("AuraPolluted"), hook)
-            self.assertLess(hook, body.index(cast_call))
+    def test_nonparty_true_preserves_spell_and_none_vetoes(self): self.scenario("nonparty_results")
+    def test_nonparty_invalid_replacements_fail_without_mutation_or_python_error(self): self.scenario("nonparty_invalid")
+    def test_script_casts_keep_replacement_header_level_and_reusable_action(self):
+        for target in ("actor", "point"):
+            for encoding in ("res", "numeric"):
+                for timing in ("delayed", "instant"):
+                    with self.subTest(target=target, encoding=encoding, timing=timing):
+                        self.scenario(f"script_{target}_{encoding}_{timing}")
+    def test_marked_script_cast_keeps_accepted_spell_after_mark_changes(self): self.scenario("script_actor_marked")
+    def test_script_checks_wait_for_range_los_and_aura(self):
+        for target in ("actor", "point"):
+            with self.subTest(target=target):
+                self.scenario(f"script_{target}_pending")
+    def test_script_native_party_veto_and_invalid_paths(self):
+        for target in ("actor", "point"):
+            for mode in ("native", "party", "veto", "invalid", "invalid_instant"):
+                with self.subTest(target=target, mode=mode):
+                    self.scenario(f"script_{target}_{mode}")
     def test_unregister_gamecontrol_lifetime_and_invalid_registration(self): self.scenario("lifetime")
 
 

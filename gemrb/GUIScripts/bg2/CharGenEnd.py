@@ -132,12 +132,17 @@ def RunGame(MyChar):
 			# delay for sorcerers, since their class pcf needs to run first to set up their spellbook properly
 			GemRB.SetTimedEvent (lambda: GemRB.ChargeSpells (MyChar), 1)
 		else:
-			GemRB.SetTimedEvent (lambda: GemRB.ExecuteString ("EquipMostDamagingMelee()", MyChar), 1)
-			if GameCheck.IsBGEE () and not GemRB.GetVar ("ImportedChar") and Spellbook.HasSorcererBook (MyChar):
-				# Fresh BGEE sorcerers learn their spells before the class pcf
-				# establishes the spontaneous book. Charge only after entering
-				# the game; imported actors must retain their saved charges.
-				GemRB.SetTimedEvent (lambda: GemRB.ChargeSpells (MyChar), 1)
+			chargeBGEE = GameCheck.IsBGEE () and not GemRB.GetVar ("ImportedChar") and Spellbook.HasSorcererBook (MyChar)
+
+			def FinishStartup ():
+				GemRB.ExecuteString ("EquipMostDamagingMelee()", MyChar)
+				# Fresh spontaneous books need the class pcf to run first;
+				# imported actors retain their saved charges.
+				if chargeBGEE:
+					GemRB.ChargeSpells (MyChar)
+
+			# The game has one timed-event slot, so schedule both actions together.
+			GemRB.SetTimedEvent (FinishStartup, 1)
 	else:
 		#when export is done, go to start
 		if GameCheck.HasTOB():

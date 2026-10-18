@@ -242,7 +242,8 @@ IF (BUILD_TESTING)
   ENDFUNCTION()
 
   ADD_NATIVE_SCRIPT_TEST(Test_GUIScripts_SpellCastCheck test_spell_cast_check.py
-    core/GUI/GameControl.cpp plugins/GUIScript/GUIScript.cpp plugins/GUIScript/PythonCallbacks.h)
+    core/GUI/GameControl.cpp core/GameScript/GSUtils.cpp
+    plugins/GUIScript/GUIScript.cpp plugins/GUIScript/PythonCallbacks.h)
   ADD_NATIVE_SCRIPT_TEST(Test_GUIScripts_SaveGame test_save_game.py plugins/GUIScript/GUIScript.cpp)
   ADD_NATIVE_SCRIPT_TEST(Test_GUIScripts_Companion test_companion.py
     plugins/GUIScript/CompanionBindings.h core/Map.cpp)

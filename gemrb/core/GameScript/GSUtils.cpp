@@ -2234,10 +2234,16 @@ void SpellCore(Scriptable* Sender, Action* parameters, int flags)
 	ResRef spellResRef;
 	int level = 0;
 	static bool third = core->HasFeature(GFFlags::RULES_3ED);
+	// Once casting starts, retain the accepted resource through the windup.
+	// Action parameters can be shared by cached scripts and must keep their
+	// original spell/level encoding for the next execution.
+	if (Sender->CurrentActionTicks && !parameters->int2Parameter) {
+		spellResRef = Sender->SpellResRef;
+	}
 
 	// handle iwd2 marked spell casting (MARKED_SPELL is 0)
 	// NOTE: supposedly only casting via SpellWait checks this, so refactor if needed
-	if (third && parameters->int0Parameter == 0 && parameters->resref0Parameter.IsEmpty()) {
+	if (spellResRef.IsEmpty() && third && parameters->int0Parameter == 0 && parameters->resref0Parameter.IsEmpty()) {
 		if (!Sender->objects.LastMarkedSpell) {
 			// otherwise we spam a lot
 			Sender->ReleaseCurrentAction();
@@ -2419,9 +2425,13 @@ void SpellPointCore(Scriptable* Sender, Action* parameters, int flags)
 {
 	ResRef spellResRef;
 	int level = 0;
+	// Match actor-target casts: do not replace the accepted spell on later ticks.
+	if (Sender->CurrentActionTicks && !parameters->int2Parameter) {
+		spellResRef = Sender->SpellResRef;
+	}
 
 	//resolve spellname
-	if (!ResolveSpellName(spellResRef, parameters)) {
+	if (spellResRef.IsEmpty() && !ResolveSpellName(spellResRef, parameters)) {
 		Sender->ReleaseCurrentAction();
 		return;
 	} else {

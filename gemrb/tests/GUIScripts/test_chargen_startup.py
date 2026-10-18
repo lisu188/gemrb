@@ -24,7 +24,9 @@ class StartupTests(unittest.TestCase):
         def timed(callback, delay):
             self.assertIn(('enter',), events)
             self.assertEqual(delay, 1)
-            timers.append(callback)
+            record('schedule')
+            # Game::SetTimedEvent replaces its single pending handler.
+            timers[:] = [callback]
 
         gemrb = SimpleNamespace(
             GameSetExpansion=lambda value: record('expansion', value),
@@ -59,6 +61,7 @@ class StartupTests(unittest.TestCase):
         # Both actions must really be deferred, not run synchronously during
         # chargen before EnterGame has established the actor's spellbook type.
         self.assertFalse(any(event[0] in ('charge', 'equip') for event in events))
+        self.assertEqual(events.count(('schedule',)), int(playmode is not None))
         for callback in timers:
             callback()
         return events
@@ -73,6 +76,7 @@ class StartupTests(unittest.TestCase):
                 self.assertEqual(events.count(('equip', 'EquipMostDamagingMelee()', 7)), 1)
                 self.assertNotIn(('hide', True), events)
                 self.assertLess(events.index(('enter',)), events.index(('charge', 7)))
+                self.assertLess(events.index(('equip', 'EquipMostDamagingMelee()', 7)), events.index(('charge', 7)))
 
     def test_imported_bgee_actors_keep_their_saved_charges(self):
         for book in (0, 2, 3):

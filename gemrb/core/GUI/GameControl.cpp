@@ -1871,7 +1871,22 @@ bool GameControl::CheckNonPartySpellCast(const Actor* source, ResRef& spell) con
 		return true;
 	}
 	const ResRef original = spell;
-	return check(source->GetGlobalID(), original, spell);
+	ResRef candidate = original;
+	if (!check(source->GetGlobalID(), original, candidate)) {
+		return false;
+	}
+	if (candidate != original) {
+		// Forced script casts skip CanCast, so validate replacements here before
+		// any casting code assumes that the resource has already been loaded.
+		const Spell* replacement = gamedata->GetSpell(candidate, true);
+		if (!replacement) {
+			Log(ERROR, "GameControl", "Cannot load replacement spell {} for {}", candidate, original);
+			return false;
+		}
+		gamedata->FreeSpell(replacement, candidate, false);
+	}
+	spell = candidate;
+	return true;
 }
 
 //generate action code for source actor to use item/cast spell on a point
