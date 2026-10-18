@@ -264,6 +264,12 @@ void Scriptable::CastSpellPointEnd(int level, bool keepStance) {
     CastSpellEnd(level, keepStance);
     finished.back().point=true;
 }
+// The engine supplies these declarations through GSUtils.h. Keep the same
+// declaration boundary when compiling extracted bodies with project warnings.
+bool ResolveSpellName(ResRef&, const Action*);
+void ResolveSpellName(ResRef&, ieDword);
+void SpellCore(Scriptable*, Action*, int);
+void SpellPointCore(Scriptable*, Action*, int);
 '''
 
 
