@@ -245,6 +245,8 @@ std::shared_ptr<AnimationFactory> BAMImporter::GetAnimationFactory(const ResRef&
 		if (length == 0) return nullptr;
 
 		auto FLT = CacheFLT();
+		// Reading the frame lookup table moves the stream away from the pixels.
+		str->Seek(DataStart, GEM_STREAM_START);
 		uint8_t* data = (uint8_t*) malloc(length);
 		str->Read(data, length);
 

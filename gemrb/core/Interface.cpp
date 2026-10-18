@@ -989,6 +989,18 @@ void Interface::DisableMusicPlaylist(size_t SongType)
 	}
 }
 
+void Interface::UpdateTimers(tick_t time)
+{
+	for (auto it = timers.begin(); it != timers.end();) {
+		if (it->IsRunning()) {
+			it->Update(time);
+			++it;
+		} else {
+			it = timers.erase(it);
+		}
+	}
+}
+
 /** this is the main loop */
 void Interface::Main()
 {
@@ -1026,14 +1038,7 @@ void Interface::Main()
 	double frames = 0.0;
 
 	do {
-		for (auto it = timers.begin(); it != timers.end();) {
-			if (it->IsRunning()) {
-				it->Update(time);
-				++it;
-			} else {
-				it = timers.erase(it);
-			}
-		}
+		UpdateTimers(time);
 
 		//don't change script when quitting is pending
 		while (QuitFlag && QuitFlag != QF_KILL) {

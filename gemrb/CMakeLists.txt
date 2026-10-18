@@ -273,6 +273,8 @@ IF (BUILD_TESTING)
     core/GameData.cpp core/Inventory.cpp core/Scriptable/Actor.cpp)
 
   ADD_EXECUTABLE(Test_gemrb_core
+    tests/core/Test_BAMImporter.cpp
+    tests/core/Test_InterfaceTimer.cpp
     tests/core/Test_Map.cpp
     tests/core/Test_MurmurHash.cpp
     tests/core/Test_Orient.cpp
