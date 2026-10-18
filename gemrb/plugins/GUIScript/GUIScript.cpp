@@ -11245,8 +11245,13 @@ struct PythonNonPartySpellCastCheck : PythonCallback {
 
 		bool allowed = false;
 		if (PyUnicode_Check(result)) {
-			replacement = ResRefFromPy(result);
-			allowed = replacement != ResRef();
+			ResRef candidate = ResRefFromPy(result);
+			if (PyErr_Occurred()) {
+				PyErr_Print();
+			} else if (!candidate.IsEmpty()) {
+				replacement = candidate;
+				allowed = true;
+			}
 		} else {
 			const int truth = PyObject_IsTrue(result);
 			if (truth < 0) {
@@ -11271,7 +11276,8 @@ The callback receives (actorGlobalID, spellResRef) after target, range, line-of-
 and aura checks succeed and immediately before the script action starts casting.\n\
 Return True to preserve the resolved spell, a non-empty string to replace the\n\
 executable spell resource, or False/None to veto the cast. Python exceptions and\n\
-truth-conversion failures veto. The hook runs once per accepted actor- or point-target\n\
+truth-conversion failures and missing or unloadable replacements veto.\n\
+The hook runs once per accepted actor- or point-target\n\
 script cast and does not run for party actors or GUI targeting. A replacement must\n\
 preserve the selected power's target/range contract because validation has completed.\n\
 It lasts for the current GameControl lifetime; None removes the check.\n\

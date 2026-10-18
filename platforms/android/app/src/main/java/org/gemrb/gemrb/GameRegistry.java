@@ -7,6 +7,7 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -66,7 +67,7 @@ final class GameRegistry {
         return entries;
     }
 
-    static void add(Context context, String gameId, String displayName) {
+    static void add(Context context, String gameId, String displayName) throws IOException {
         GamePaths.validateGameId(gameId);
         List<Entry> entries = load(context);
         Entry existing = find(entries, gameId);
@@ -74,7 +75,7 @@ final class GameRegistry {
             entries.remove(existing);
         }
         entries.add(new Entry(gameId, displayName));
-        save(context, entries);
+        if (!save(context, entries)) throw new IOException("Cannot persist imported game registry");
         select(context, gameId, displayName);
     }
 
@@ -96,7 +97,7 @@ final class GameRegistry {
         return null;
     }
 
-    private static void save(Context context, List<Entry> entries) {
+    private static boolean save(Context context, List<Entry> entries) {
         JSONArray array = new JSONArray();
         for (Entry entry : entries) {
             JSONObject item = new JSONObject();
@@ -107,9 +108,9 @@ final class GameRegistry {
             } catch (JSONException ignored) {
             }
         }
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .edit()
                 .putString(KEY_GAMES, array.toString())
-                .apply();
+                .commit();
     }
 }

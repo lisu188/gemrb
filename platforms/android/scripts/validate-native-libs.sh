@@ -73,6 +73,17 @@ if ! unzip -p "${APK}" assets/runtime.zip > "${RUNTIME_ARCHIVE}" || [[ ! -s "${R
     exit 1
 fi
 
+runtime_digest="$(unzip -p "${APK}" assets/runtime.sha256 | tr -d '\r\n')"
+if command -v sha256sum >/dev/null 2>&1; then
+    actual_digest="$(sha256sum "${RUNTIME_ARCHIVE}" | awk '{print $1}')"
+else
+    actual_digest="$(shasum -a 256 "${RUNTIME_ARCHIVE}" | awk '{print $1}')"
+fi
+if [[ ! "${runtime_digest}" =~ ^[0-9a-f]{64}$ || "${runtime_digest}" != "${actual_digest}" ]]; then
+    echo "Packaged runtime SHA-256 does not match runtime.zip" >&2
+    exit 1
+fi
+
 RUNTIME_LIST="${TMP}/runtime.list"
 unzip -Z1 "${RUNTIME_ARCHIVE}" > "${RUNTIME_LIST}"
 for required_asset in \

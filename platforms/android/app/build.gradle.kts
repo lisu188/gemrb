@@ -1,4 +1,5 @@
 import org.gradle.api.tasks.bundling.Zip
+import java.security.MessageDigest
 
 plugins {
     id("com.android.application")
@@ -34,6 +35,7 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.9.5-android-m4"
+        testInstrumentationRunner = "org.gemrb.gemrb.BootstrapRegression"
 
         ndk {
             abiFilters += listOf(gemrbAbi)
@@ -127,6 +129,8 @@ val packageAndroidRuntime by tasks.registering(Zip::class) {
     dependsOn(prepareAndroidDependencies, prepareRuntimeMarker)
     archiveFileName.set("runtime.zip")
     destinationDirectory.set(generatedAssetsDir)
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
 
     from(repoRoot.resolve("gemrb/GUIScripts")) {
         into("gemrb/GUIScripts")
@@ -157,10 +161,30 @@ val packageAndroidRuntime by tasks.registering(Zip::class) {
     from(runtimeMarkerDir.resolve("VERSION"))
 }
 
-tasks.named("preBuild") {
+val identifyAndroidRuntime by tasks.registering {
     dependsOn(packageAndroidRuntime)
+    val archive = packageAndroidRuntime.flatMap { it.archiveFile }
+    inputs.file(archive)
+    val identity = generatedAssetsDir.resolve("runtime.sha256")
+    outputs.file(identity)
+    doLast {
+        val digest = MessageDigest.getInstance("SHA-256")
+        archive.get().asFile.inputStream().use { input ->
+            val buffer = ByteArray(128 * 1024)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                digest.update(buffer, 0, count)
+            }
+        }
+        identity.writeText(digest.digest().joinToString("") { "%02x".format(it.toInt() and 255) } + "\n")
+    }
+}
+
+tasks.named("preBuild") {
+    dependsOn(identifyAndroidRuntime)
 }
 
 tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }.configureEach {
-    dependsOn(packageAndroidRuntime)
+    dependsOn(identifyAndroidRuntime)
 }
