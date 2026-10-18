@@ -264,6 +264,7 @@ public final class BootstrapActivity extends Activity {
         GameImporter.Result result = null;
         boolean handedToLaunch = false;
         Exception failure = null;
+        ImportJournal.Recovery aborted = null;
         try {
             result = GameImporter.importTree(this, treeUri, cancellation,
                     (copied, total, currentName) -> postIfActive(() -> {
@@ -285,9 +286,10 @@ public final class BootstrapActivity extends Activity {
             }
         } catch (Exception error) {
             failure = error;
+            if (error instanceof GameImporter.ImportFailure) aborted = ((GameImporter.ImportFailure) error).recovery;
         } finally {
             if (!operation.isCommitted() && result != null && !isRegistered(result.gameId)) {
-                try { GameImporter.discardImportedResult(result); }
+                try { aborted = GameImporter.discardImportedResult(result); }
                 catch (IOException cleanup) {
                     if (failure == null) failure = cleanup;
                     else failure.addSuppressed(cleanup);
@@ -296,6 +298,13 @@ public final class BootstrapActivity extends Activity {
             if (!handedToLaunch) {
                 try { recoverImports(); }
                 catch (IOException recovery) { Log.w(TAG, "Import recovery requires attention", recovery); }
+                if (aborted != null) {
+                    if (aborted.removedBytes > 0) recoverySummary = "Cleaned verified cancelled/failed copies: "
+                            + aborted.removedBytes + " bytes.\n" + recoverySummary;
+                    for (String notice : aborted.notices) {
+                        if (!recoverySummary.contains(notice)) recoverySummary += notice + "\n";
+                    }
+                }
                 finishImport(operation, false, failure);
             }
             if (importThread == Thread.currentThread()) importThread = null;
@@ -319,7 +328,8 @@ public final class BootstrapActivity extends Activity {
             setImporting(false);
             refreshImportedGames();
             displayRecovery();
-            if (error != null) setStatus("Game import/launch failed:\n" + error.getMessage());
+            if (!operation.isCommitted() && operation.cancellation().get()) setStatus("Game import cancelled.");
+            else if (error != null) setStatus("Game import/launch failed:\n" + error.getMessage());
             else if (operation.isCommitted()) setStatus("Imported game ready.");
             else setStatus("Game import cancelled.");
         });

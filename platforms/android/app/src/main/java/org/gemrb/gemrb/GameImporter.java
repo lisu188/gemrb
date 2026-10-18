@@ -18,6 +18,15 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 final class GameImporter {
+    static final class ImportFailure extends IOException {
+        final ImportJournal.Recovery recovery;
+
+        ImportFailure(Exception cause, ImportJournal.Recovery recovery) {
+            super(cause.getMessage(), cause);
+            this.recovery = recovery;
+        }
+    }
+
     interface ProgressListener {
         void onProgress(long copiedBytes, long totalBytes, String currentName);
     }
@@ -123,16 +132,32 @@ final class GameImporter {
             journal.promote();
             checkCancelled(cancelled);
         } catch (Exception error) {
-            try { journal.abort(); }
-            catch (IOException cleanup) { error.addSuppressed(cleanup); }
-            if (error instanceof IOException) throw (IOException) error;
-            throw new IOException("Game import failed", error);
+            ImportJournal.Recovery recovery = new ImportJournal.Recovery();
+            try { recovery = journal.abort(); }
+            catch (IOException cleanup) {
+                error.addSuppressed(cleanup);
+                recovery.notices.add("Import cleanup requires attention: " + cleanup.getMessage());
+            }
+            logRecovery(recovery);
+            throw new ImportFailure(error, recovery);
         }
         return new Result(gameId, displayName, journal.gameTarget, journal.saveTarget, scan.totalBytes, journal);
     }
 
-    static void discardImportedResult(Result result) throws IOException {
-        synchronized (ImportJournal.LOCK) { result.journal.abort(); }
+    static ImportJournal.Recovery discardImportedResult(Result result) throws IOException {
+        synchronized (ImportJournal.LOCK) {
+            ImportJournal.Recovery recovery = result.journal.abort();
+            logRecovery(recovery);
+            return recovery;
+        }
+    }
+
+    private static void logRecovery(ImportJournal.Recovery recovery) {
+        for (String removed : recovery.removedFiles) {
+            android.util.Log.i("GemRB", "Removed verified copied asset: " + removed);
+        }
+        for (String notice : recovery.notices) android.util.Log.i("GemRB", notice);
+        android.util.Log.i("GemRB", "Import cleanup removed " + recovery.removedBytes + " verified copied bytes");
     }
 
     private static void migrateImportedSaveDirectories(File gameStaging, File saveStaging) throws IOException {
