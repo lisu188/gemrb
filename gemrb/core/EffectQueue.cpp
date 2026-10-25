@@ -1336,6 +1336,7 @@ void EffectQueue::RemoveAllEffects(ieDword opcode)
 static bool RemoveMemo(Actor* ownerActor, unsigned int type, unsigned int idx, ieDword bonus = 0)
 {
 	CRESpellMemorization* sm = ownerActor->spellbook.GetSpellMemorization(type, idx);
+	if (!sm) return false;
 	size_t diff = sm->SlotCountWithBonus - sm->SlotCount;
 	if (diff == 0) return false;
 

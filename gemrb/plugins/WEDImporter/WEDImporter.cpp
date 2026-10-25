@@ -360,12 +360,14 @@ WallPolygonGroup WEDImporter::MakeGroupFromTableEntries(size_t idx, size_t cnt) 
 
 std::vector<WallPolygonGroup> WEDImporter::GetWallGroups() const
 {
+	if (overlays.empty() || overlays[0].size.IsInvalid() ||
+	    PLTOffset > str->Size() || VerticesOffset > str->Size()) return {};
 	str->Seek(PLTOffset, GEM_STREAM_START);
 	size_t PLTSize = (VerticesOffset > PLTOffset ? VerticesOffset - PLTOffset : PLTOffset - VerticesOffset) / 2;
 	std::vector<ieWord> PLT(PLTSize);
 
 	for (ieWord& idx : PLT) {
-		str->ReadWord(idx);
+		if (str->ReadWord(idx) != 2) return {};
 	}
 
 	auto ceilInt = [](int32_t v, int32_t div) {
@@ -386,16 +388,18 @@ std::vector<WallPolygonGroup> WEDImporter::GetWallGroups() const
 
 	str->Seek(WallGroupsOffset, GEM_STREAM_START);
 	for (size_t i = 0; i < groupSize; ++i) {
-		ieWord index;
-		ieWord count;
-		str->ReadWord(index);
-		str->ReadWord(count);
+		ieWord index = 0;
+		ieWord count = 0;
+		if (str->ReadWord(index) != 2 || str->ReadWord(count) != 2) return {};
+		if (index > PLT.size() || count > PLT.size() - index) return {};
 
 		polygonGroups.emplace_back();
 		WallPolygonGroup& group = polygonGroups.back();
 
-		for (ieWord j = index; j < index + count; ++j) {
+		const size_t end = size_t(index) + count;
+		for (size_t j = index; j < end; ++j) {
 			ieWord polyIndex = PLT[j];
+			if (polyIndex >= polygonTable.size()) return {};
 			auto wp = polygonTable[polyIndex];
 			if (wp) {
 				group.push_back(std::move(wp));

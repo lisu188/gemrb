@@ -200,7 +200,7 @@ public:
 	/** Scales down a sprite by a ratio */
 	Holder<Sprite2D> SpriteScaleDown(const Holder<Sprite2D>& sprite, unsigned int ratio);
 
-	Color SpriteGetPixelSum(const Holder<Sprite2D>& sprite, unsigned short xbase, unsigned short ybase, unsigned int ratio) const;
+	Color SpriteGetPixelSum(const Holder<Sprite2D>& sprite, unsigned int xbase, unsigned int ybase, unsigned int ratio) const;
 };
 
 extern GEM_EXPORT PluginHolder<Video> VideoDriver;
