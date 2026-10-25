@@ -35,3 +35,23 @@ keep the checks bounded and are not complete engine implementations. The sprite
 adapter uses the real class declaration and SDL's measured byte pitch.
 No malformed-input or baseline cases are run by these two scripts. Passing
 these checks is not full plugin-build, renderer, gameplay, or content acceptance.
+
+`test_valid_palette_load.py` checks the production `Interface::LoadPalette`
+template with the shipped demo and minimal palettes:
+
+```sh
+python3 gemrb/tests/security/test_valid_palette_load.py \
+  --config-directory build --output palette-result.json
+```
+
+Its six ordinary cases include the demo's 12-by-88 `pal16.png`, whose twelve
+meaningful colors must fit the 16-entry destination without reading beyond the
+source row. It also checks the 256-by-1 demo and minimal images at the supported
+destination widths. Every copied color is compared with libpng's decoded image,
+and any unused suffix is checked to be `Color{}`, including after prefilled rows
+are reloaded. The fixture compiles the complete actual Sprite2D, pixel iterator,
+Region, Palette and MurmurHash implementations with their real headers, using
+SDL's actual byte pitch without creating a display. Only resource lookup and
+fatal logging are bounded adapters. `--resource-root` can supply the tracked
+assets when an isolated source overlay omits demo data. This is not a full
+Interface initialization or proof of an asset-free library mode.
