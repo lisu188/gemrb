@@ -8,8 +8,14 @@ on:
   pull_request:
     branches: [ master ]
 
+permissions:
+  contents: read
+
 jobs:
   build:
+    permissions:
+      contents: read
+      pull-requests: read
     runs-on: ubuntu-latest
 
     steps:
@@ -42,3 +48,4 @@ jobs:
     - name: Fail if there is not conformance with clang-format
       if: steps.linter.outputs.checks-failed > 0
       run: exit 1
+

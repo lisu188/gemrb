@@ -8,6 +8,9 @@ on:
   schedule:
     - cron: '0 15 1/7 * *' # Weekly at 22:00 UTC
 
+permissions:
+  contents: read
+
 jobs:
   latest:
     if: github.repository == 'gemrb/gemrb'
@@ -51,4 +54,5 @@ jobs:
             https://scan.coverity.com/builds?project=GemRB
         env:
           TOKEN: ${{ secrets.COVERITY_SCAN_TOKEN }}
+
 
