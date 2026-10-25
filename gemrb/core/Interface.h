@@ -652,9 +652,11 @@ private:
 		ResourceHolder<ImageMgr> palim = gamedata->GetResourceHolder<ImageMgr>(resref);
 		if (palim) {
 			auto image = palim->GetSprite2D();
+			if (!image || image->Frame.w <= 0 || image->Frame.h <= 0) return false;
 			int height = image->Frame.h;
-			palettes.resize(height);
-			Region clip(0, 0, SIZE, height);
+			palettes.assign(height, {});
+			// The standard 16-color ramps contain only 12 meaningful columns.
+			Region clip(0, 0, std::min(SIZE, image->Frame.w), height);
 			auto it = image->GetIterator(IPixelIterator::Direction::Forward, IPixelIterator::Direction::Forward, clip);
 			auto end = Sprite2D::Iterator::end(it);
 			for (; it != end; ++it) {

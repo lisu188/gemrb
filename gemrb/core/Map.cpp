@@ -3788,7 +3788,7 @@ void Map::SetBackground(const ResRef& bgResRef, ieDword duration)
 {
 	ResourceHolder<ImageMgr> bmp = gamedata->GetResourceHolder<ImageMgr>(bgResRef);
 
-	Background = bmp->GetSprite2D();
+	Background = bmp ? bmp->GetSprite2D() : nullptr;
 	BgDuration = duration;
 }
 

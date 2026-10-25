@@ -9,9 +9,19 @@
 
 #include "Scriptable/Actor.h"
 
+#include <limits>
+
 namespace GemRB {
 
 std::vector<std::vector<bool>> TraversabilityCache::BlockingShapeCache;
+
+// Return the spare cell for coordinates outside a row or the complete grid.
+// Validate before multiplying so even off-map actor bounds cannot wrap an index.
+static size_t TraversalCellIndex(int x, int y, size_t rowPitch, size_t cellCount) noexcept
+{
+	if (x < 0 || y < 0 || !rowPitch || size_t(x) >= rowPitch || size_t(y) >= cellCount / rowPitch) return cellCount;
+	return size_t(y) * rowPitch + size_t(x);
+}
 
 size_t TraversabilityCache::CachedActorsState::AddCachedActorState(Actor* inActor)
 {
@@ -53,10 +63,7 @@ void TraversabilityCache::CachedActorsState::ClearOldPosition(const size_t i, st
 		for (int x = 0; x < region[i].w; ++x) {
 			const int targetX = region[i].x + x;
 			const int targetY = region[i].y + y;
-			const size_t targetIdx = targetY * inWidth * 16 + targetX;
-
-			// use spare cell index for invalid data: it's faster than paying fee for validating branch each iteration:
-			const size_t idx = targetIdx < trashIdx ? targetIdx : trashIdx;
+			const size_t idx = TraversalCellIndex(targetX, targetY, size_t(inWidth) * 16, trashIdx);
 			TraversabilityCellData& currentTraversabilityData = inOutTraversabilityData[idx];
 
 			const auto blockingShapeIdx = y * blockingShapeRegionW * 16 + x;
@@ -87,10 +94,7 @@ void TraversabilityCache::CachedActorsState::MarkNewPosition(const size_t i, std
 		for (int x = 0; x < region[newActorStateIdx].w; ++x) {
 			const int targetX = region[newActorStateIdx].x + x;
 			const int targetY = region[newActorStateIdx].y + y;
-			const size_t targetIdx = targetY * inWidth * 16 + targetX;
-
-			// use spare cell index for invalid data: it's faster than paying fee for validating branch each iteration:
-			const size_t idx = targetIdx < trashIdx ? targetIdx : trashIdx;
+			const size_t idx = TraversalCellIndex(targetX, targetY, size_t(inWidth) * 16, trashIdx);
 			TraversabilityCellData& currentTraversabilityData = inOutTraversabilityData[idx];
 
 			const auto blockingShapeIdx = y * blockingShapeRegionW * 16 + x;
@@ -121,13 +125,14 @@ void TraversabilityCache::CachedActorsState::UpdateNewState(const size_t i)
 	erase(newActorStateIdx);
 }
 
-void TraversabilityCache::Update()
+bool TraversabilityCache::Update()
 {
 	// this cache is updated once per frame and only if any path was requested
 	if (hasBeenUpdatedThisFrame) {
-		return;
+		return !traversabilityData.empty();
 	}
 	hasBeenUpdatedThisFrame = true;
+	if (!ValidateTraversabilityCacheSize()) return false;
 
 	// determine all changes in actors' state regarding their alive status, bumpable status, their size category and position, also check for new and removed actors
 	static std::vector<size_t> actorsRemoved;
@@ -182,12 +187,8 @@ void TraversabilityCache::Update()
 
 	// if there is no change, don't update
 	if (actorsNew.actor.empty() && actorsRemoved.empty() && actorsUpdated.empty()) {
-		return;
+		return true;
 	}
-
-	// todo: this probably could be done once, when the map is loaded
-	// make sure the cache is of proper size
-	ValidateTraversabilityCacheSize();
 
 	// for all removed actors: clear in cache all the cells they were part of
 	for (const auto removedCachedActorIndex : actorsRemoved) {
@@ -238,6 +239,7 @@ void TraversabilityCache::Update()
 
 	// add to cache all the actors detected as new on the map since last cache update
 	cachedActorsState.emplace_back(std::move(actorsNew));
+	return true;
 }
 
 TraversabilityCache::CachedActorsState::CachedActorsState(const size_t reserve)
@@ -304,17 +306,28 @@ TraversabilityCache::TraversabilityCellState TraversabilityCache::CachedActorsSt
 	return flagsToCellStateMapping[idx];
 }
 
-void TraversabilityCache::ValidateTraversabilityCacheSize()
+bool TraversabilityCache::ValidateTraversabilityCacheSize()
 {
 	// append a spare cell, it will be used as a dumpster, to throw at it calculations for invalid indices;
 	// it's faster than paying the fee for validation branches each iteration.
 	// It's okay to have garbage cell in the data, if no one will never read from it.
 	constexpr size_t spareCells = 1;
-	const size_t expectedSize = map->PropsSize().h * 12 * map->PropsSize().w * 16 + spareCells;
-	if (traversabilityData.size() != expectedSize) {
-		traversabilityData.resize(expectedSize, TraversabilityCellData { nullptr, TraversabilityCellValueEmpty });
-		memset(static_cast<void*>(traversabilityData.data()), 0, sizeof(TraversabilityCellData) * traversabilityData.size());
+	const auto mapSize = map->PropsSize();
+	// PathFinder also uses signed-int indices. Bound the expanded navmap before
+	// calculating its area, and retain room for the spare cell.
+	const size_t limit = std::min(size_t(std::numeric_limits<int>::max()), traversabilityData.max_size());
+	if (mapSize.IsInvalid() || limit <= spareCells ||
+	    size_t(mapSize.w) > (limit - spareCells) / 12 / 16 / size_t(mapSize.h)) {
+		traversabilityData.clear();
+		cachedActorsState.clear();
+		return false;
 	}
+	const size_t expectedSize = size_t(mapSize.h) * 12 * size_t(mapSize.w) * 16 + spareCells;
+	if (traversabilityData.size() != expectedSize) {
+		traversabilityData.assign(expectedSize, TraversabilityCellData { nullptr, TraversabilityCellValueEmpty });
+		cachedActorsState.clear();
+	}
+	return true;
 }
 
 const std::vector<bool>& TraversabilityCache::GetBlockingShape(const Actor* actor, const Actor::BlockingSizeCategory blockingSizeCategory)

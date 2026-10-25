@@ -12,21 +12,23 @@
 #include "Palette.h"
 
 #include "Streams/DataStream.h"
-#include "Video/RLE.h"
+#include "Video/ImageBufferSize.h"
+#include "Video/ImageCopyBounds.h"
 #include "Video/Video.h"
+
+#include <limits>
+#include <memory>
 
 using namespace GemRB;
 
 bool BAMImporter::Import(DataStream* str)
 {
-	char Signature[8];
-	str->Read(Signature, 8);
+	char Signature[8] {};
+	if (str->Read(Signature, 8) != 8) return false;
 	if (strncmp(Signature, "BAMCV1  ", 8) == 0) {
-		str->Seek(4, GEM_CURRENT_POS);
+		if (str->Seek(4, GEM_CURRENT_POS) < 0) return false;
 		str = DecompressStream(str);
-		if (!str)
-			return false;
-		str->Read(Signature, 8);
+		if (!str || str->Read(Signature, 8) != 8) return false;
 	}
 
 	version = BAMVersion::V1;
@@ -36,92 +38,93 @@ bool BAMImporter::Import(DataStream* str)
 		return false;
 	}
 
-	ieDword frameCount;
+	ieDword frameCount = 0;
 	if (version == BAMVersion::V1) {
-		str->ReadScalar<ieDword, ieWord>(frameCount);
+		ieWord count = 0;
+		if (str->ReadWord(count) != 2) return false;
+		frameCount = count;
 	} else {
-		str->ReadDword(frameCount);
+		if (str->ReadDword(frameCount) != 4) return false;
 	}
+	// AnimationFactory reserves the maximum index as InvalidIndex.
+	if (frameCount >= std::numeric_limits<index_t>::max()) return false;
 	frames.resize(frameCount);
 
-	ieDword cycleCount;
+	ieDword cycleCount = 0;
 	if (version == BAMVersion::V1) {
-		str->ReadScalar<ieDword, ieByte>(cycleCount);
+		ieByte count = 0;
+		if (str->ReadScalar(count) != 1) return false;
+		cycleCount = count;
 	} else {
-		str->ReadDword(cycleCount);
+		if (str->ReadDword(cycleCount) != 4) return false;
 	}
+	if (cycleCount >= std::numeric_limits<index_t>::max()) return false;
 	cycles.resize(cycleCount);
 
 	ieDword dataBlockCount = 0;
 	if (version == BAMVersion::V1) {
-		str->Read(&CompressedColorIndex, 1);
-	} else {
-		str->ReadDword(dataBlockCount);
+		if (str->Read(&CompressedColorIndex, 1) != 1) return false;
+	} else if (str->ReadDword(dataBlockCount) != 4) {
+		return false;
 	}
-
 	ieDword PaletteOffset = 0;
-
-	str->ReadDword(FramesOffset);
+	if (str->ReadDword(FramesOffset) != 4) return false;
 	if (version == BAMVersion::V1) {
-		str->ReadDword(PaletteOffset);
-		str->ReadDword(FLTOffset);
+		if (str->ReadDword(PaletteOffset) != 4 || str->ReadDword(FLTOffset) != 4) return false;
 		DataStart = str->Size();
 	} else {
-		str->ReadDword(CyclesOffset);
-		str->ReadScalar<strpos_t, ieDword>(DataStart);
+		ieDword offset = 0;
+		if (str->ReadDword(CyclesOffset) != 4 || str->ReadDword(offset) != 4) return false;
+		DataStart = offset;
+		if (DataStart > str->Size() || dataBlockCount > (str->Size() - DataStart) / 28 ||
+		    CyclesOffset > str->Size() || cycles.size() > (str->Size() - CyclesOffset) / 4) return false;
 	}
-
-	str->Seek(FramesOffset, GEM_STREAM_START);
+	if (FramesOffset > str->Size() || frames.size() > (str->Size() - FramesOffset) / 12 ||
+	    str->Seek(FramesOffset, GEM_STREAM_START) < 0) return false;
 
 	for (auto& frame : frames) {
-		// ReadRegion is ordered x,y,w,h
-		// for some reason these rects are w,h,x,y
-		str->ReadSize(frame.bounds.size);
-		str->ReadPoint(frame.bounds.origin);
-
+		ieWord width = 0, height = 0;
+		int16_t x = 0, y = 0;
+		if (str->ReadWord(width) != 2 || str->ReadWord(height) != 2 ||
+		    str->ReadScalar(x) != 2 || str->ReadScalar(y) != 2) return false;
+		frame.bounds = Region(x, y, width, height);
+		// Empty frames occur in fonts. They need no sprite allocation.
+		size_t bytes = 0;
+		if (width && height && !CheckedImageByteCount(width, height, version == BAMVersion::V1 ? 1 : 4, bytes)) return false;
 		if (version == BAMVersion::V1) {
-			ieDword offset;
-			str->ReadScalar(offset);
+			ieDword offset = 0;
+			if (str->ReadDword(offset) != 4) return false;
 			frame.RLE = (offset & 0x80000000) == 0;
-			frame.location.dataOffset = offset & 0x7FFFFFFF;
+			frame.location.dataOffset = offset & 0x7fffffff;
+			if (frame.location.dataOffset > str->Size()) return false;
 			DataStart = std::min(DataStart, frame.location.dataOffset);
 		} else {
-			str->ReadWord(frame.location.v2.dataBlockIdx);
-			str->ReadWord(frame.location.v2.dataBlockCount);
+			if (str->ReadWord(frame.location.v2.dataBlockIdx) != 2 ||
+			    str->ReadWord(frame.location.v2.dataBlockCount) != 2) return false;
+			const size_t first = frame.location.v2.dataBlockIdx;
+			if (first > dataBlockCount || frame.location.v2.dataBlockCount > dataBlockCount - first) return false;
 		}
 	}
 
-	if (version == BAMVersion::V2) {
-		str->Seek(CyclesOffset, GEM_STREAM_START);
-	}
-
+	if (version == BAMVersion::V2 && str->Seek(CyclesOffset, GEM_STREAM_START) < 0) return false;
 	for (auto& cycle : cycles) {
-		str->ReadWord(cycle.FramesCount);
-		str->ReadWord(cycle.FirstFrame);
+		if (str->ReadWord(cycle.FramesCount) != 2 || str->ReadWord(cycle.FirstFrame) != 2) return false;
+		const size_t end = size_t(cycle.FirstFrame) + cycle.FramesCount;
+		if (end >= std::numeric_limits<index_t>::max() ||
+		    (version == BAMVersion::V2 && end > frames.size())) return false;
 	}
+	if (version == BAMVersion::V2) return true;
 
-	if (version == BAMVersion::V2) {
-		return true;
-	}
-
-	str->Seek(PaletteOffset, GEM_STREAM_START);
+	if (PaletteOffset > str->Size() || str->Size() - PaletteOffset < 1024 ||
+	    str->Seek(PaletteOffset, GEM_STREAM_START) < 0) return false;
 	palette = MakeHolder<Palette>();
 	Palette::Colors buffer;
-
-	// no need to switch this
 	for (auto& color : buffer) {
-		// bgra format
-		str->Read(&color.b, 1);
-		str->Read(&color.g, 1);
-		str->Read(&color.r, 1);
-		unsigned char a;
-		str->Read(&a, 1);
-
-		// BAM v2 (EEs) supports alpha, but for backwards compatibility an alpha of 0 is still 255
-		color.a = a ? a : 255;
+		uint8_t bgra[4] {};
+		if (str->Read(bgra, 4) != 4) return false;
+		color = Color { bgra[2], bgra[1], bgra[0], bgra[3] ? bgra[3] : uint8_t(255) };
 	}
 	palette->CopyColors(buffer);
-
 	return true;
 }
 
@@ -133,143 +136,160 @@ BAMImporter::index_t BAMImporter::GetCycleSize(index_t cycle)
 	return cycles[cycle].FramesCount;
 }
 
-Holder<Sprite2D> BAMImporter::GetFrameInternal(const FrameEntry& frameInfo, bool RLESprite, uint8_t* data) const
+Holder<Sprite2D> BAMImporter::GetFrameInternal(const FrameEntry& frameInfo, bool RLESprite, const uint8_t* data, size_t dataSize) const
 {
-	Holder<Sprite2D> spr;
 	const Region& rgn = frameInfo.bounds;
-	uint8_t* dataBegin = data + frameInfo.location.dataOffset;
-
-	if (RLESprite) {
-		PixelFormat fmt = PixelFormat::RLE8Bit(palette, CompressedColorIndex);
-		const uint8_t* dataEnd = FindRLEPos(dataBegin, rgn.w, Point(rgn.w, rgn.h - 1), CompressedColorIndex);
-		ptrdiff_t dataLen = dataEnd - dataBegin;
-		if (dataLen == 0) return nullptr;
-		void* pixels = malloc(dataLen);
-		memcpy(pixels, dataBegin, dataLen);
-		spr = VideoDriver->CreateSprite(rgn, pixels, fmt);
-	} else {
-		void* pixels = nullptr;
-		if (frameInfo.RLE) {
-			pixels = DecodeRLEData(dataBegin, rgn.size, CompressedColorIndex);
-		} else {
-			pixels = malloc(rgn.w * rgn.h);
-			memcpy(pixels, dataBegin, rgn.w * rgn.h);
+	if (!rgn.w || !rgn.h) {
+		// Fonts use empty sprites for glyph metrics. Keep their concrete sprite
+		// and palette without reading a pixel from the stream.
+		size_t bytes = 0;
+		if (rgn.w < 0 || rgn.h < 0 || !CheckedImageByteCount(std::max(1, rgn.w), std::max(1, rgn.h), 1, bytes)) return nullptr;
+		void* pixels = calloc(1, 1);
+		if (!pixels) return nullptr;
+		return VideoDriver->CreateSprite(rgn, pixels, PixelFormat::Paletted8Bit(palette, true, CompressedColorIndex));
+	}
+	size_t pixelCount = 0;
+	if (!CheckedImageByteCount(rgn.w, rgn.h, 1, pixelCount) || frameInfo.location.dataOffset < DataStart) return nullptr;
+	const size_t offset = frameInfo.location.dataOffset - DataStart;
+	if (offset > dataSize) return nullptr;
+	const uint8_t* dataBegin = data + offset;
+	const size_t available = dataSize - offset;
+	size_t encodedBytes = 0;
+	if (frameInfo.RLE) {
+		// Validate each token before retaining or decoding the encoded span.
+		for (size_t decoded = 0; decoded < pixelCount;) {
+			if (encodedBytes == available) return nullptr;
+			const uint8_t pixel = dataBegin[encodedBytes++];
+			size_t run = 1;
+			if (pixel == CompressedColorIndex) {
+				if (encodedBytes == available) return nullptr;
+				run += dataBegin[encodedBytes++];
+			}
+			decoded += std::min(run, pixelCount - decoded);
 		}
-		PixelFormat fmt = PixelFormat::Paletted8Bit(palette, true, CompressedColorIndex);
-		spr = VideoDriver->CreateSprite(rgn, pixels, fmt);
+	} else if (pixelCount > available) {
+		return nullptr;
 	}
 
-	return spr;
+	const size_t bytes = RLESprite ? encodedBytes : pixelCount;
+	uint8_t* pixels = static_cast<uint8_t*>(malloc(bytes));
+	if (!pixels) return nullptr;
+	if (RLESprite || !frameInfo.RLE) {
+		memcpy(pixels, dataBegin, bytes);
+	} else {
+		size_t src = 0;
+		for (size_t dst = 0; dst < pixelCount;) {
+			const uint8_t pixel = dataBegin[src++];
+			const size_t run = pixel == CompressedColorIndex ? std::min<size_t>(size_t(dataBegin[src++]) + 1, pixelCount - dst) : 1;
+			std::fill_n(pixels + dst, run, pixel);
+			dst += run;
+		}
+	}
+	const PixelFormat fmt = RLESprite ? PixelFormat::RLE8Bit(palette, CompressedColorIndex) : PixelFormat::Paletted8Bit(palette, true, CompressedColorIndex);
+	return VideoDriver->CreateSprite(rgn, pixels, fmt);
 }
 
 Holder<Sprite2D> BAMImporter::GetV2Frame(const FrameEntry& frame)
 {
-	size_t frameSize = frame.bounds.size.Area() * 4;
-	uint8_t* frameData = static_cast<uint8_t*>(malloc(frameSize));
-	std::fill(frameData, frameData + frameSize, 0);
-
-	size_t dataBlockOffset = DataStart + frame.location.v2.dataBlockIdx * sizeof(BAMV2DataBlock);
-	str->Seek(dataBlockOffset, GEM_STREAM_START);
-
-	BAMV2DataBlock dataBlock;
+	if (!frame.bounds.w || !frame.bounds.h) {
+		size_t bytes = 0;
+		if (frame.bounds.w < 0 || frame.bounds.h < 0 || !CheckedImageByteCount(std::max(1, frame.bounds.w), std::max(1, frame.bounds.h), 4, bytes)) return nullptr;
+		void* pixels = calloc(1, 1);
+		if (!pixels) return nullptr;
+		return VideoDriver->CreateSprite(frame.bounds, pixels, PixelFormat::ARGB32Bit());
+	}
+	size_t frameSize = 0;
+	if (!CheckedImageByteCount(frame.bounds.w, frame.bounds.h, 4, frameSize) || DataStart > str->Size()) return nullptr;
+	// The wire record is seven dwords, independent of host struct padding.
+	const size_t availableBlocks = (str->Size() - DataStart) / 28;
+	const size_t first = frame.location.v2.dataBlockIdx;
+	if (first > availableBlocks || frame.location.v2.dataBlockCount > availableBlocks - first) return nullptr;
+	std::unique_ptr<uint8_t, decltype(&free)> frameData(static_cast<uint8_t*>(calloc(frameSize, 1)), free);
+	if (!frameData || str->Seek(DataStart + first * 28, GEM_STREAM_START) < 0) return nullptr;
 	for (uint16_t i = 0; i < frame.location.v2.dataBlockCount; ++i) {
-		str->ReadDword(dataBlock.pvrzPage);
-		str->ReadScalar<int, ieDword>(dataBlock.source.x);
-		str->ReadScalar<int, ieDword>(dataBlock.source.y);
-		str->ReadScalar<int, ieDword>(dataBlock.size.w);
-		str->ReadScalar<int, ieDword>(dataBlock.size.h);
-		str->ReadScalar<int, ieDword>(dataBlock.destination.x);
-		str->ReadScalar<int, ieDword>(dataBlock.destination.y);
-
-		Blit(frame, dataBlock, frameData);
-	}
-
-	PixelFormat fmt = PixelFormat::ARGB32Bit();
-	return { VideoDriver->CreateSprite(frame.bounds, frameData, fmt) };
-}
-
-void BAMImporter::Blit(const FrameEntry& frame, const BAMV2DataBlock& dataBlock, uint8_t* frameData)
-{
-	// The page is likely to be the same for many sequential accesses
-	if (!lastPVRZ || dataBlock.pvrzPage != lastPVRZPage) {
-		auto resRef = fmt::format("mos{:04d}", dataBlock.pvrzPage);
-
-		lastPVRZ = gamedata->GetResourceHolder<ImageMgr>(resRef, true);
-		lastPVRZPage = dataBlock.pvrzPage;
-	}
-
-	auto sprite = lastPVRZ->GetSprite2D(Region { dataBlock.source.x, dataBlock.source.y, dataBlock.size.w, dataBlock.size.h });
-	if (!sprite) {
-		return;
-	}
-
-	const uint8_t* spritePixels = static_cast<uint8_t*>(sprite->LockSprite());
-	for (int h = 0; h < dataBlock.size.h; ++h) {
-		size_t offset = h * sprite->Frame.w * 4;
-		size_t destOffset =
-			4 * (frame.bounds.w * (dataBlock.destination.y + h) + dataBlock.destination.x);
-
-		std::copy(
-			spritePixels + offset,
-			spritePixels + offset + sprite->Frame.w * 4,
-			frameData + destOffset);
-	}
-
-	sprite->UnlockSprite();
-}
-
-std::vector<BAMImporter::index_t> BAMImporter::CacheFLT()
-{
-	index_t count = 0;
-	for (const auto& cycle : cycles) {
-		index_t tmp = cycle.FirstFrame + cycle.FramesCount;
-		if (tmp > count) {
-			count = tmp;
+		ieDword fields[7] {};
+		for (auto& field : fields) {
+			if (str->ReadDword(field) != 4) return nullptr;
 		}
+		for (size_t field = 1; field < 7; ++field) {
+			if (fields[field] > uint32_t(INT_MAX)) return nullptr;
+		}
+		const BAMV2DataBlock block { fields[0], Point(int(fields[1]), int(fields[2])), Size(int(fields[3]), int(fields[4])), Point(int(fields[5]), int(fields[6])) };
+		if (!Blit(frame, block, frameData.get())) return nullptr;
 	}
-	if (count == 0) return {};
+	return VideoDriver->CreateSprite(frame.bounds, frameData.release(), PixelFormat::ARGB32Bit());
+}
 
-	std::vector<index_t> FLT(count);
-	str->Seek(FLTOffset, GEM_STREAM_START);
-	str->ReadArray(FLT);
-	return FLT;
+bool BAMImporter::Blit(const FrameEntry& frame, const BAMV2DataBlock& block, uint8_t* frameData)
+{
+	if (!ImageContainsRect(frame.bounds.w, frame.bounds.h, block.destination.x, block.destination.y, block.size.w, block.size.h)) return false;
+	if (!block.size.w || !block.size.h) return true;
+	if (!lastPVRZ || block.pvrzPage != lastPVRZPage) {
+		auto resRef = fmt::format("mos{:04d}", block.pvrzPage);
+		lastPVRZ = gamedata->GetResourceHolder<ImageMgr>(resRef, true);
+		lastPVRZPage = block.pvrzPage;
+	}
+	if (!lastPVRZ) return false;
+	const auto sourceSize = lastPVRZ->GetSize();
+	if (!ImageContainsRect(sourceSize.w, sourceSize.h, block.source.x, block.source.y, block.size.w, block.size.h)) return false;
+	auto sprite = lastPVRZ->GetSprite2D(Region { block.source.x, block.source.y, block.size.w, block.size.h });
+	const size_t rowBytes = size_t(block.size.w) * 4;
+	if (!sprite || sprite->Format().Bpp != 4 || sprite->Frame.w < block.size.w || sprite->Frame.h < block.size.h || sprite->GetPitch() < rowBytes) return false;
+	const uint8_t* source = static_cast<const uint8_t*>(sprite->LockSprite());
+	if (!source) {
+		sprite->UnlockSprite();
+		return false;
+	}
+	for (int y = 0; y < block.size.h; ++y) {
+		const size_t destination = (size_t(frame.bounds.w) * (size_t(block.destination.y) + y) + block.destination.x) * 4;
+		memcpy(frameData + destination, source + size_t(y) * sprite->GetPitch(), rowBytes);
+	}
+	sprite->UnlockSprite();
+	return true;
+}
+
+bool BAMImporter::CacheFLT(std::vector<index_t>& FLT)
+{
+	size_t count = 0;
+	for (const auto& cycle : cycles) {
+		const size_t end = size_t(cycle.FirstFrame) + cycle.FramesCount;
+		if (end >= std::numeric_limits<index_t>::max()) return false;
+		count = std::max(count, end);
+	}
+	if (FLTOffset > str->Size() || count > (str->Size() - FLTOffset) / 2 ||
+	    str->Seek(FLTOffset, GEM_STREAM_START) < 0) return false;
+	FLT.assign(count, 0);
+	for (auto& index : FLT) {
+		if (str->ReadWord(index) != 2 || index >= frames.size()) return false;
+	}
+	return true;
 }
 
 std::shared_ptr<AnimationFactory> BAMImporter::GetAnimationFactory(const ResRef& resref, bool allowCompression)
 {
 	std::vector<Holder<Sprite2D>> animframes;
-
+	std::vector<index_t> FLT;
 	if (version == BAMVersion::V1) {
-		str->Seek(DataStart, GEM_STREAM_START);
-		strpos_t length = str->Remains();
-		if (length == 0) return nullptr;
-
-		auto FLT = CacheFLT();
-		// Reading the frame lookup table moves the stream away from the pixels.
-		str->Seek(DataStart, GEM_STREAM_START);
-		uint8_t* data = (uint8_t*) malloc(length);
-		str->Read(data, length);
-
-		for (const auto& frameInfo : frames) {
-			bool RLECompressed = allowCompression && frameInfo.RLE;
-			animframes.push_back(GetFrameInternal(frameInfo, RLECompressed, data - DataStart));
-		}
-		free(data);
-
-		return std::make_shared<AnimationFactory>(resref, std::move(animframes), cycles, std::move(FLT));
-	} else {
-		std::vector<index_t> FLT(frames.size());
-
-		for (index_t i = 0; i < frames.size(); ++i) {
-			FLT[i] = i;
-		}
-
+		if (DataStart > str->Size() || !CacheFLT(FLT)) return nullptr;
+		const size_t length = str->Size() - DataStart;
+		if (!length || length > size_t(std::numeric_limits<strret_t>::max()) || str->Seek(DataStart, GEM_STREAM_START) < 0) return nullptr;
+		std::unique_ptr<uint8_t, decltype(&free)> data(static_cast<uint8_t*>(malloc(length)), free);
+		if (!data || str->Read(data.get(), length) != strret_t(length)) return nullptr;
 		for (const auto& frame : frames) {
-			animframes.push_back(GetV2Frame(frame));
+			auto sprite = GetFrameInternal(frame, allowCompression && frame.RLE, data.get(), length);
+			if (!sprite) return nullptr;
+			animframes.push_back(std::move(sprite));
 		}
-
-		return std::make_shared<AnimationFactory>(resref, std::move(animframes), cycles, std::move(FLT));
+	} else {
+		FLT.resize(frames.size());
+		for (index_t i = 0; i < frames.size(); ++i) FLT[i] = i;
+		for (const auto& frame : frames) {
+			auto sprite = GetV2Frame(frame);
+			if (!sprite) return nullptr;
+			animframes.push_back(std::move(sprite));
+		}
 	}
+	return std::make_shared<AnimationFactory>(resref, std::move(animframes), cycles, std::move(FLT));
 }
 
 /** Debug Function: Returns the Global Animation Palette as a Sprite2D Object.
@@ -277,6 +297,7 @@ If the Global Animation Palette is NULL, returns NULL. */
 Holder<Sprite2D> BAMImporter::GetPalette()
 {
 	unsigned char* pixels = (unsigned char*) malloc(256);
+	if (!pixels) return nullptr;
 	unsigned char* p = pixels;
 	for (int i = 0; i < 256; i++) {
 		*p++ = (unsigned char) i;

@@ -4,11 +4,14 @@
 
 #include "Video.h"
 
+#include "ImageBufferSize.h"
 #include "Palette.h"
 #include "Polygon.h"
 #include "Sprite2D.h"
 
 #include <cmath>
+#include <cstdint>
+#include <limits>
 
 namespace GemRB {
 
@@ -216,11 +219,15 @@ void Video::BlitGameSpriteWithPalette(const Holder<Sprite2D>& spr, const Holder<
 
 Holder<Sprite2D> Video::SpriteScaleDown(const Holder<Sprite2D>& sprite, unsigned int ratio)
 {
+	if (!sprite || !ratio || sprite->Frame.size.IsInvalid()) return nullptr;
 	Region scaledFrame = sprite->Frame;
 	scaledFrame.w /= ratio;
 	scaledFrame.h /= ratio;
 
-	unsigned int* pixels = (unsigned int*) malloc(scaledFrame.w * scaledFrame.h * 4);
+	size_t byteCount = 0;
+	if (!CheckedImageByteCount(scaledFrame.w, scaledFrame.h, 4, byteCount)) return nullptr;
+	unsigned int* pixels = (unsigned int*) malloc(byteCount);
+	if (!pixels) return nullptr;
 	int i = 0;
 
 	for (int y = 0; y < scaledFrame.h; y++) {
@@ -233,6 +240,7 @@ Holder<Sprite2D> Video::SpriteScaleDown(const Holder<Sprite2D>& sprite, unsigned
 
 	static const PixelFormat fmt(4, 0x000000ff, 0x0000ff00, 0x00ff0000, 0xff000000);
 	Holder<Sprite2D> small = CreateSprite(scaledFrame, pixels, fmt);
+	if (!small) return nullptr;
 
 	small->Frame.x = sprite->Frame.x / ratio;
 	small->Frame.y = sprite->Frame.y / ratio;
@@ -240,12 +248,16 @@ Holder<Sprite2D> Video::SpriteScaleDown(const Holder<Sprite2D>& sprite, unsigned
 	return small;
 }
 
-Color Video::SpriteGetPixelSum(const Holder<Sprite2D>& sprite, unsigned short xbase, unsigned short ybase, unsigned int ratio) const
+Color Video::SpriteGetPixelSum(const Holder<Sprite2D>& sprite, unsigned int xbase, unsigned int ybase, unsigned int ratio) const
 {
 	// TODO: turn this into one of our software "shaders"
 	Color sum;
-	unsigned int count = ratio * ratio;
-	unsigned int r = 0, g = 0, b = 0, a = 0;
+	if (!sprite || !ratio || sprite->Frame.size.IsInvalid()) return sum;
+	if (uint64_t(xbase) * ratio + ratio > uint64_t(sprite->Frame.w) ||
+	    uint64_t(ybase) * ratio + ratio > uint64_t(sprite->Frame.h)) return sum;
+	const uint64_t count = uint64_t(ratio) * ratio;
+	if (count > std::numeric_limits<uint64_t>::max() / 255) return sum;
+	uint64_t r = 0, g = 0, b = 0, a = 0;
 
 	for (unsigned int x = 0; x < ratio; x++) {
 		for (unsigned int y = 0; y < ratio; y++) {
