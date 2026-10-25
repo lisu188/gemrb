@@ -36,7 +36,7 @@ Holder<Font> BAMFontManager::GetFont(unsigned short /*ptSize*/, FontStyle /*styl
 	auto af = bamImp->GetAnimationFactory(resRef, false); // released by BAMFont
 	// FIXME: this test only exists to let the minimal test pass
 	// we should maybe instead use a *valid* font for such a "test"
-	if (af->GetFrame(0) == nullptr) {
+	if (!af || af->GetFrame(0) == nullptr) {
 		return nullptr;
 	}
 
