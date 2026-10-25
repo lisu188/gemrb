@@ -210,7 +210,10 @@ Path Map::FindPath(const Point& s, const Point& d, const unsigned int size, unsi
 {
 	TRACY(ZoneScoped);
 
-	traversabilityCache.Update();
+	if (!traversabilityCache.Update()) return {};
+	const Size mapSize = PropsSize();
+	const Size navSize(mapSize.w * 16, mapSize.h * 12);
+	if (!navSize.PointInside(s) || !navSize.PointInside(d)) return {};
 
 	if (InDebugMode(DebugMode::PATHFINDER))
 		Log(DEBUG, "FindPath", "s = {}, d = {}, caller = {}, dist = {}, size = {}",
@@ -232,6 +235,7 @@ Path Map::FindPath(const Point& s, const Point& d, const unsigned int size, unsi
 		orient_t direction = GetOrient(nmptDest, nmptSource);
 		AdjustPositionDirected(nmptDest, direction, size, minDistance);
 	}
+	if (!navSize.PointInside(nmptDest)) return {};
 
 	if (nmptDest == nmptSource) return {};
 
@@ -243,8 +247,7 @@ Path Map::FindPath(const Point& s, const Point& d, const unsigned int size, unsi
 		return {};
 	}
 
-	const Size& mapSize = PropsSize();
-	if (!mapSize.PointInside(smptSource)) return {};
+	if (!mapSize.PointInside(smptSource) || !mapSize.PointInside(smptDest)) return {};
 
 	const auto getChildBlockedStatusFn = size > 2 ? &Map::GetChildBlockedStatusForBigSize : &Map::GetChildBlockedStatusForSmallSize;
 
@@ -329,6 +332,7 @@ Path Map::FindPath(const Point& s, const Point& d, const unsigned int size, unsi
 			const NavmapPoint nmptChild(nmptCurrent.x + 16 * dxAdjacent[i], nmptCurrent.y + 12 * dyAdjacent[i]);
 			const SearchmapPoint smptChild { nmptChild };
 			// Outside map
+			if (!navSize.PointInside(nmptChild)) continue;
 			if (smptChild.x < 0 || smptChild.y < 0 || smptChild.x >= mapSize.w || smptChild.y >= mapSize.h) continue;
 			// Already visited
 			int smptChildIdx = smptChild.y * mapSize.w + smptChild.x;
