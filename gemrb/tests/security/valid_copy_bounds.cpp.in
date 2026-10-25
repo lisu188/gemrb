@@ -1,0 +1,310 @@
+// SPDX-FileCopyrightText: 2026 Contributors to the GemRB project <https://gemrb.org>
+// SPDX-License-Identifier: GPL-2.0-or-later
+#include "Sprite2D.h"
+#include "Video/ImageBufferSize.h"
+#include "Video/ImageCopyBounds.h"
+#include "Video/RLE.h"
+#include <SDL.h>
+#include <climits>
+#include <cstring>
+#include <fstream>
+#include <iostream>
+#include <limits>
+#include <memory>
+#include <string>
+#include <type_traits>
+#include <vector>
+using namespace GemRB;
+using ieDword = uint32_t;
+using ieWord = uint16_t;
+using ieByte = uint8_t;
+using strpos_t = size_t;
+using strret_t = std::ptrdiff_t;
+constexpr int GEM_STREAM_START = 1, GEM_CURRENT_POS = 2;
+template<typename T> using ResourceHolder = std::shared_ptr<T>;
+namespace GemRB {
+@SPRITE_METHODS@
+@REGION_METHODS@
+bool Sprite2D::ConvertFormatTo(const PixelFormat&) noexcept { return false; }
+}
+// The stream/resource/factory adapters only supply ordinary valid resources.
+// PixelFormat, Region, Sprite2D fields and virtual APIs come from real headers.
+struct DataStream {
+    std::vector<uint8_t> bytes;
+    size_t pos = 0;
+    size_t Size() const { return bytes.size(); }
+    strret_t Seek(size_t offset, int origin) {
+        size_t next = origin == GEM_CURRENT_POS ? pos + offset : offset;
+        if (next > bytes.size()) return -1;
+        pos = next;
+        return 0;
+    }
+    strret_t Read(void* dest, size_t length) {
+        if (pos > bytes.size() || length > bytes.size() - pos) return -1;
+        memcpy(dest, bytes.data() + pos, length);
+        pos += length;
+        return length;
+    }
+    template<class T> strret_t ReadScalar(T& value) {
+        if (pos > bytes.size() || sizeof(T) > bytes.size() - pos) return -1;
+        typename std::make_unsigned<T>::type raw = 0;
+        for (size_t i = 0; i < sizeof(T); ++i) raw |= typename std::make_unsigned<T>::type(bytes[pos++]) << (8 * i);
+        value = static_cast<T>(raw);
+        return sizeof(T);
+    }
+    strret_t ReadDword(ieDword& value) { return ReadScalar(value); }
+    strret_t ReadWord(ieWord& value) { return ReadScalar(value); }
+};
+DataStream* DecompressStream(DataStream*) { return nullptr; } // Compression wrapper is outside these fixtures.
+struct FixtureSprite : Sprite2D {
+    std::vector<uint8_t> storage;
+    SDL_Surface* surface = nullptr;
+    FixtureSprite(int width, int height, PixelFormat fmt, uint16_t stride)
+        : Sprite2D(Region(0, 0, width, height), nullptr, fmt, stride), storage(size_t(stride) * height, 0xee) {
+        surface = SDL_CreateRGBSurfaceFrom(storage.data(), width, height, fmt.Depth, stride, fmt.Rmask, fmt.Gmask, fmt.Bmask, fmt.Amask);
+        if (!surface) throw std::runtime_error(SDL_GetError());
+        pitch = surface->pitch;
+        pixels = surface->pixels;
+    }
+    ~FixtureSprite() noexcept override { SDL_FreeSurface(surface); }
+};
+struct ImageMgr {
+    Size size;
+    Holder<Sprite2D> sprite;
+    Size GetSize() const { return size; }
+    Holder<Sprite2D> GetSprite2D(Region) { return sprite; }
+};
+struct GameData {
+    template<class T> ResourceHolder<T> GetResourceHolder(const std::string&, bool) { return {}; }
+};
+GameData gameData;
+GameData* gamedata = &gameData;
+struct Driver {
+    Holder<Sprite2D> CreateSprite(const Region& region, void* input, const PixelFormat& fmt) {
+        PixelFormat decoded = fmt;
+        uint8_t* source = static_cast<uint8_t*>(input);
+        if (fmt.RLE) {
+            source = DecodeRLEData(source, region.size, fmt.ColorKey);
+            free(input);
+            decoded.RLE = false;
+        }
+        const size_t rowBytes = size_t(region.w) * decoded.Bpp;
+        const uint16_t stride = (rowBytes + 3) / 4 * 4;
+        auto sprite = std::make_shared<FixtureSprite>(region.w, region.h, decoded, stride);
+        for (int row = 0; row < region.h; ++row) memcpy(sprite->storage.data() + size_t(row) * stride, source + size_t(row) * rowBytes, rowBytes);
+        free(source);
+        return sprite;
+    }
+};
+Driver driver;
+Driver* VideoDriver = &driver;
+struct BMPImporter {
+    GemRB::Size size;
+    ieDword Size = 0, Compression = 0, ImageSize = 0, NumColors = 0;
+    ieWord Planes = 0, BitCount = 0;
+    bool hasAlpha = false;
+    Color* PaletteColors = nullptr;
+    void* pixels = nullptr;
+    ~BMPImporter() { free(PaletteColors); free(pixels); }
+    bool Import(DataStream*);
+};
+enum class BAMVersion { V1, V2 };
+struct FrameEntry {
+    Region bounds;
+    bool RLE = false;
+    union {
+        strpos_t dataOffset = 0;
+        struct { uint16_t dataBlockIdx, dataBlockCount; } v2;
+    } location;
+};
+struct BAMV2DataBlock { ieDword pvrzPage; Point source; Size size; Point destination; };
+struct CycleEntry { uint16_t FramesCount = 0, FirstFrame = 0; };
+struct BAMImporter {
+    using index_t = uint16_t;
+    BAMVersion version = BAMVersion::V1;
+    std::vector<FrameEntry> frames;
+    std::vector<CycleEntry> cycles;
+    Holder<Palette> palette;
+    ieByte CompressedColorIndex = 0;
+    ieDword FLTOffset = 0, CyclesOffset = 0, FramesOffset = 0;
+    strpos_t DataStart = 0;
+    DataStream* str = nullptr;
+    ResourceHolder<ImageMgr> lastPVRZ;
+    ieDword lastPVRZPage = 0;
+    bool Import(DataStream*);
+    Holder<Sprite2D> GetFrameInternal(const FrameEntry&, bool, const uint8_t*, size_t) const;
+    Holder<Sprite2D> GetV2Frame(const FrameEntry&);
+    bool Blit(const FrameEntry&, const BAMV2DataBlock&, uint8_t*);
+    bool CacheFLT(std::vector<index_t>&);
+};
+enum class MOSVersion { V1, V2 };
+struct MOSV2DataBlock { ieDword pvrzPage; Point source; Size size; Point destination; };
+struct MOSImporter {
+    Size size;
+    MOSVersion version = MOSVersion::V1;
+    ieWord Cols = 0, Rows = 0;
+    struct {
+        struct { ieDword BlockSize = 0, PalOffset = 0; } v1;
+        struct { ieDword NumBlocks = 0, BlockOffset = 0; } v2;
+    } layout;
+    DataStream* str = nullptr;
+    ResourceHolder<ImageMgr> lastPVRZ;
+    ieDword lastPVRZPage = 0;
+    bool Import(DataStream*);
+    bool Blit(const MOSV2DataBlock&, uint8_t*);
+    Holder<Sprite2D> GetSprite2Dv1();
+    Holder<Sprite2D> GetSprite2Dv2();
+};
+@BMP_METHODS@
+@BAM_METHODS@
+@MOS_METHODS@
+
+void word(std::vector<uint8_t>& data, uint16_t value) { data.push_back(value); data.push_back(value >> 8); }
+void dword(std::vector<uint8_t>& data, uint32_t value) { for (int i = 0; i < 4; ++i) data.push_back(value >> (8 * i)); }
+void setDword(std::vector<uint8_t>& data, size_t offset, uint32_t value) { for (int i = 0; i < 4; ++i) data[offset + i] = value >> (8 * i); }
+void signature(std::vector<uint8_t>& data, const std::string& text) { data.insert(data.end(), text.begin(), text.end()); }
+void require(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
+std::vector<uint8_t> tight(const Holder<Sprite2D>& sprite) {
+    require(bool(sprite), "missing sprite");
+    std::vector<uint8_t> result;
+    const auto* pixels = static_cast<const uint8_t*>(sprite->LockSprite());
+    for (int row = 0; row < sprite->Frame.h; ++row) result.insert(result.end(), pixels + size_t(row) * sprite->GetPitch(), pixels + size_t(row) * sprite->GetPitch() + size_t(sprite->Frame.w) * sprite->Format().Bpp);
+    sprite->UnlockSprite();
+    return result;
+}
+void bmp(int bits, bool topDown, unsigned colorsUsed, unsigned header = 40, bool masks = false) {
+    const unsigned width = 3, height = 2, stride = ((width * bits + 31) / 32) * 4;
+    const unsigned colors = bits <= 8 ? (colorsUsed ? colorsUsed : 1u << bits) : 0;
+    const unsigned offset = 14 + header + colors * 4;
+    DataStream stream;
+    auto& data = stream.bytes;
+    signature(data, "BM"); dword(data, offset + stride * height); dword(data, 0); dword(data, offset);
+    dword(data, header); dword(data, width); dword(data, topDown ? uint32_t(-int(height)) : height);
+    word(data, 1); word(data, bits); dword(data, masks ? 3 : 0); dword(data, stride * height);
+    dword(data, 0); dword(data, 0); dword(data, colorsUsed); dword(data, 0);
+    data.resize(14 + header);
+    if (masks) {
+        setDword(data, 54, 0xff); setDword(data, 58, 0xff00); setDword(data, 62, 0xff0000); setDword(data, 66, 0xff000000);
+    }
+    for (unsigned i = 0; i < colors; ++i) { data.push_back(i + 2); data.push_back(i + 1); data.push_back(i); data.push_back(0); }
+    std::vector<uint8_t> expected;
+    for (unsigned y = 0; y < height; ++y) {
+        for (unsigned x = 0; x < width; ++x) {
+            const unsigned i = y * width + x;
+            if (bits <= 8) expected.push_back(i % colors);
+            else { expected.push_back(10 + i); expected.push_back(30 + i); expected.push_back(50 + i); expected.push_back(header == 56 || header == 124 ? 70 + i : 255); }
+        }
+    }
+    for (unsigned row = 0; row < height; ++row) {
+        const unsigned y = topDown ? row : height - 1 - row;
+        const size_t rowStart = data.size();
+        for (unsigned x = 0; x < width; ++x) {
+            const unsigned i = y * width + x;
+            if (bits == 4) {
+                if (!(x & 1)) data.push_back((i % colors) << 4);
+                else data.back() |= i % colors;
+            } else if (bits == 8) data.push_back(i % colors);
+            else if (bits == 24) { data.push_back(50 + i); data.push_back(30 + i); data.push_back(10 + i); }
+            else { data.push_back(10 + i); data.push_back(30 + i); data.push_back(50 + i); data.push_back(70 + i); }
+        }
+        data.resize(rowStart + stride, 0);
+    }
+    BMPImporter importer;
+    require(importer.Import(&stream), "BMP import");
+    require(importer.size.w == 3 && importer.size.h == 2 && memcmp(importer.pixels, expected.data(), expected.size()) == 0, "BMP pixels");
+    if (colors) require(importer.NumColors == colors && importer.PaletteColors[1].r == 1 && importer.PaletteColors[1].g == 2 && importer.PaletteColors[1].b == 3 && importer.PaletteColors[1].a == 255, "BMP palette");
+    std::cout << "valid BMP " << bits << "-bit " << (topDown ? "top-down" : "bottom-up") << " header " << header << " colors " << colors << ": PASS\n";
+}
+ResourceHolder<ImageMgr> page() {
+    auto image = std::make_shared<ImageMgr>();
+    image->size = Size(8, 8);
+    auto sprite = std::make_shared<FixtureSprite>(3, 2, PixelFormat::ARGB32Bit(), 16);
+    for (unsigned y = 0; y < 2; ++y) for (unsigned x = 0; x < 12; ++x) sprite->storage[y * 16 + x] = 20 + y * 12 + x;
+    image->sprite = sprite;
+    return image;
+}
+std::vector<uint8_t> blockOutput() {
+    std::vector<uint8_t> output(5 * 4 * 4, 0);
+    for (unsigned y = 0; y < 2; ++y) for (unsigned x = 0; x < 12; ++x) output[((y + 1) * 5 + 1) * 4 + x] = 20 + y * 12 + x;
+    return output;
+}
+void blocks(std::vector<uint8_t>& data) { for (uint32_t field : { 0, 2, 1, 3, 2, 1, 1 }) dword(data, field); }
+void bamV1() {
+    DataStream stream;
+    auto& data = stream.bytes;
+    signature(data, "BAM V1  "); word(data, 2); data.push_back(1); data.push_back(0);
+    dword(data, 24); dword(data, 52); dword(data, 1076);
+    word(data, 4); word(data, 2); word(data, 0); word(data, 0); dword(data, 0x80000000u | 1080);
+    word(data, 4); word(data, 2); word(data, 0); word(data, 0); dword(data, 1088);
+    word(data, 2); word(data, 0);
+    data.resize(1076, 0); word(data, 0); word(data, 1);
+    const std::vector<uint8_t> raw {1, 2, 3, 4, 5, 6, 7, 8}, rle {1, 2, 0, 1, 3, 4, 5, 6}, decoded {1, 2, 0, 0, 3, 4, 5, 6};
+    data.insert(data.end(), raw.begin(), raw.end()); data.insert(data.end(), rle.begin(), rle.end());
+    BAMImporter importer; importer.str = &stream;
+    require(importer.Import(&stream), "BAM V1 import");
+    std::vector<uint16_t> flt;
+    require(importer.CacheFLT(flt) && flt == std::vector<uint16_t>({0, 1}), "BAM FLT");
+    require(tight(importer.GetFrameInternal(importer.frames[0], false, data.data() + importer.DataStart, data.size() - importer.DataStart)) == raw, "BAM raw");
+    require(tight(importer.GetFrameInternal(importer.frames[1], false, data.data() + importer.DataStart, data.size() - importer.DataStart)) == decoded, "BAM RLE decode");
+    require(tight(importer.GetFrameInternal(importer.frames[1], true, data.data() + importer.DataStart, data.size() - importer.DataStart)) == decoded, "BAM retained RLE");
+    std::cout << "valid BAM V1 raw/RLE frames and lookup table: PASS\n";
+}
+void bamV2() {
+    DataStream stream; auto& data = stream.bytes;
+    signature(data, "BAM V2  "); dword(data, 1); dword(data, 1); dword(data, 1); dword(data, 32); dword(data, 44); dword(data, 48);
+    word(data, 5); word(data, 4); word(data, 0); word(data, 0); word(data, 0); word(data, 1);
+    word(data, 1); word(data, 0); blocks(data);
+    BAMImporter importer; importer.str = &stream; importer.lastPVRZ = page();
+    require(importer.Import(&stream), "BAM V2 import");
+    require(tight(importer.GetV2Frame(importer.frames[0])) == blockOutput(), "BAM V2 padded rows");
+    std::cout << "valid BAM V2 padded source pitch and destination subrectangle: PASS\n";
+}
+void mosV1(unsigned width, unsigned height) {
+    DataStream stream; auto& data = stream.bytes;
+    const unsigned cols = (width + 63) / 64, rows = (height + 63) / 64, count = cols * rows;
+    signature(data, "MOS V1  "); word(data, width); word(data, height); word(data, cols); word(data, rows); dword(data, 64); dword(data, 24);
+    for (unsigned block = 0; block < count; ++block) for (unsigned color = 0; color < 256; ++color) { data.push_back(color); data.push_back(color + 1); data.push_back(color + 2); data.push_back(255); }
+    const size_t table = data.size(); data.resize(table + count * 4, 0);
+    const size_t pixelStart = data.size();
+    std::vector<uint8_t> expected(size_t(width) * height * 4);
+    for (unsigned y = 0; y < rows; ++y) for (unsigned x = 0; x < cols; ++x) {
+        setDword(data, table + (y * cols + x) * 4, data.size() - pixelStart);
+        const unsigned bw = std::min(64u, width - x * 64), bh = std::min(64u, height - y * 64);
+        for (unsigned row = 0; row < bh; ++row) for (unsigned col = 0; col < bw; ++col) {
+            const uint8_t index = (y * 64 + row + x * 64 + col) % 250;
+            data.push_back(index);
+            const size_t out = ((y * 64 + row) * width + x * 64 + col) * 4;
+            expected[out] = index; expected[out + 1] = index + 1; expected[out + 2] = index + 2; expected[out + 3] = 255;
+        }
+    }
+    MOSImporter importer; importer.str = &stream;
+    require(importer.Import(&stream) && tight(importer.GetSprite2Dv1()) == expected, "MOS V1 pixels");
+    std::cout << "valid MOS V1 " << width << 'x' << height << " tile grid: PASS\n";
+}
+void mosV2() {
+    DataStream stream; auto& data = stream.bytes;
+    signature(data, "MOS V2  "); dword(data, 5); dword(data, 4); dword(data, 1); dword(data, 24); blocks(data);
+    MOSImporter importer; importer.str = &stream; importer.lastPVRZ = page();
+    require(importer.Import(&stream) && tight(importer.GetSprite2Dv2()) == blockOutput(), "MOS V2 padded rows");
+    std::cout << "valid MOS V2 padded source pitch and destination subrectangle: PASS\n";
+}
+int main(int argc, char** argv) {
+    try {
+        require(argc == 2, "fixture directory argument");
+        for (const std::string name : {"sample.bmp", "sample_8bit.bmp"}) {
+            std::ifstream file(std::string(argv[1]) + "/" + name, std::ios::binary);
+            require(bool(file), "existing BMP fixture");
+            DataStream stream;
+            stream.bytes.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+            BMPImporter importer;
+            require(importer.Import(&stream) && importer.pixels && importer.size.w > 0 && importer.size.h > 0, "existing BMP fixture import");
+            std::cout << "existing BMP " << name << ": PASS\n";
+        }
+        bmp(24, false, 0); bmp(24, true, 0);
+        bmp(8, false, 0); bmp(8, true, 4);
+        bmp(4, false, 0); bmp(4, true, 4);
+        bmp(32, false, 0, 56, true); bmp(32, true, 0, 124);
+        bamV1(); bamV2(); mosV1(64, 64); mosV1(65, 65); mosV2();
+    } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
+    return 0;
+}
