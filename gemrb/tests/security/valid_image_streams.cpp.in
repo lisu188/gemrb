@@ -1,0 +1,150 @@
+// SPDX-FileCopyrightText: 2026 Contributors to the GemRB project <https://gemrb.org>
+// SPDX-License-Identifier: GPL-2.0-or-later
+#include "Video/ImageBufferSize.h"
+#include "Sprite2D.h"
+#include <SDL.h>
+#include <algorithm>
+#include <cstdlib>
+#include <cstring>
+#include <iostream>
+#include <memory>
+#include <string>
+#include <vector>
+
+using ieDword = uint32_t;
+using strpos_t = size_t;
+using strret_t = std::ptrdiff_t;
+constexpr int GEM_STREAM_START = 1;
+constexpr unsigned long IE_TIS_CLASS_ID = 1;
+using GemRB::Holder;
+using GemRB::PixelFormat;
+using GemRB::Point;
+using GemRB::Region;
+using GemRB::Sprite2D;
+template<typename T> using ResourceHolder = std::shared_ptr<T>;
+using ResRef = std::string;
+namespace GemRB {
+@SPRITE_METHODS@
+@REGION_METHODS@
+// This bounded adapter never performs conversions or rendering. The real
+// Sprite2D declaration still determines every field and virtual signature.
+bool Sprite2D::ConvertFormatTo(const PixelFormat&) noexcept { return false; }
+}
+class DataStream {
+    size_t pos = 0;
+public:
+    std::vector<uint8_t> data;
+    std::string filename = "AA0000N.tis";
+    explicit DataStream(size_t size) : data(size) {}
+    size_t Size() const { return data.size(); }
+    void Seek(size_t offset, int) { pos = offset; }
+    strret_t ReadDword(ieDword& output) {
+        if (pos > data.size() || data.size() - pos < 4) return -1;
+        output = 0;
+        for (unsigned i = 0; i < 4; ++i) output |= ieDword(data[pos++]) << (i * 8);
+        return 4;
+    }
+};
+struct FixtureSprite : Sprite2D {
+    std::vector<uint8_t> storage;
+    SDL_Surface* surface;
+    FixtureSprite(int width, int height, uint16_t stride)
+        : Sprite2D(Region(0, 0, width, height), nullptr, PixelFormat::ARGB32Bit(), stride),
+          storage(size_t(stride) * height, 0xee) {
+        surface = SDL_CreateRGBSurfaceFrom(storage.data(), width, height, format.Depth,
+                                          stride, format.Rmask, format.Gmask, format.Bmask, format.Amask);
+        if (!surface) throw std::runtime_error(SDL_GetError());
+        pitch = surface->pitch;
+        pixels = surface->pixels;
+    }
+    ~FixtureSprite() noexcept override { SDL_FreeSurface(surface); }
+};
+struct ImageMgr {
+    Holder<Sprite2D> sprite;
+    Holder<Sprite2D> GetSprite2D(Region) { return sprite; }
+};
+struct GameData {
+    template<typename T> ResourceHolder<T> GetResourceHolder(const std::string&, bool) { return {}; }
+};
+GameData gameData;
+GameData* gamedata = &gameData;
+struct Driver {
+    Holder<Sprite2D> CreateSprite(Region region, uint8_t* pixels, PixelFormat) {
+        auto sprite = std::make_shared<FixtureSprite>(region.w, region.h, uint16_t(region.w * 4));
+        std::copy(pixels, pixels + sprite->storage.size(), sprite->storage.begin());
+        std::free(pixels);
+        return sprite;
+    }
+};
+Driver driver;
+Driver* VideoDriver = &driver;
+struct TISPVRBlock { ieDword pvrzPage = 0; Point source; };
+struct TISImporter {
+    DataStream* str;
+    ieDword TileSize = 64, headerShift = 0, TilesSectionLen = 12;
+    ResourceHolder<ImageMgr> lastPVRZ;
+    ieDword lastPVRZPage = 0;
+    Holder<Sprite2D> GetTilePVR(int);
+    void Blit(const TISPVRBlock&, uint8_t*);
+};
+struct FileEntry { ieDword resLocator = 0, dataOffset = 0, fileSize = 0; };
+struct TileEntry { ieDword resLocator = 0, dataOffset = 0, tileSize = 0, tilesCount = 0; };
+size_t lastStart = 0, lastLength = 0;
+DataStream* SliceStream(DataStream*, size_t start, size_t length) {
+    lastStart = start;
+    lastLength = length;
+    return new DataStream(length);
+}
+struct BIFImporter {
+    DataStream* stream;
+    std::vector<TileEntry> tentries;
+    std::vector<FileEntry> fentries;
+    unsigned tentcount = 0;
+    ieDword fentcount = 0;
+    DataStream* GetStream(unsigned long, unsigned long);
+};
+using namespace GemRB;
+
+@TIS_GET@
+@TIS_BLIT@
+@BIF_GET@
+
+int main() {
+    // These are ordinary SDL surfaces. Their int pitch can exceed the engine's
+    // uint16_t field after row alignment, despite a representable tight row.
+    SDL_Surface* aligned = SDL_CreateRGBSurface(0, 21845, 1, 24, 0, 0, 0, 0);
+    if (!aligned || aligned->pitch != 65536) return 5;
+    SDL_FreeSurface(aligned);
+    size_t imageBytes = 0;
+    if (CheckedImageByteCount(21845, 1, 3, imageBytes)) return 6;
+    aligned = SDL_CreateRGBSurface(0, 21844, 1, 24, 0, 0, 0, 0);
+    if (!aligned || aligned->pitch != 65532 ||
+        !CheckedImageByteCount(21844, 1, 3, imageBytes) || imageBytes != 65532) return 7;
+    SDL_FreeSurface(aligned);
+    std::cout << "valid SDL row-alignment representation: PASS\n";
+    DataStream tileRecords(24);
+    auto page = std::make_shared<ImageMgr>();
+    auto sourceSprite = std::make_shared<FixtureSprite>(64, 64, 260);
+    if (sourceSprite->GetPitch() != 260 || sourceSprite->Format().Bpp != 4) return 4;
+    page->sprite = sourceSprite;
+    for (size_t y = 0; y < 64; ++y)
+        for (size_t x = 0; x < 256; ++x) sourceSprite->storage[y * 260 + x] = uint8_t(x + y);
+    TISImporter tile {&tileRecords};
+    tile.lastPVRZ = page;
+    auto copied = tile.GetTilePVR(1);
+    if (!copied || copied->Frame.w != 64 || copied->Frame.h != 64 || copied->GetPitch() != 256) return 1;
+    const auto* copiedPixels = static_cast<const uint8_t*>(copied->LockSprite());
+    for (size_t y = 0; y < 64; ++y)
+        for (size_t x = 0; x < 256; ++x)
+            if (copiedPixels[y * 256 + x] != uint8_t(x + y)) return 2;
+    copied->UnlockSprite();
+    std::cout << "valid padded-pitch TIS tile: PASS\n";
+    DataStream archive(1024);
+    BIFImporter bif {&archive};
+    bif.tentries.push_back({0, 32, 64, 3});
+    bif.tentcount = 1;
+    std::unique_ptr<DataStream> slice(bif.GetStream(0, IE_TIS_CLASS_ID));
+    if (!slice || lastStart != 32 || lastLength != 192) return 3;
+    std::cout << "valid BIF tile span: PASS\n";
+    return 0;
+}
