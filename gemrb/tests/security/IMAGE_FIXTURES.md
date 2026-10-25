@@ -17,6 +17,8 @@ decoded byte layout with libpng. The TIS/BIF check also needs SDL2 development
 files and a CMake build directory containing GemRB's generated `config.h`.
 It includes the actual `Sprite2D`, `PixelFormat` and geometry headers, extracts
 the used production constructors/accessors, and creates real SDL surfaces.
+The TIS crop also checks the source image dimensions before requesting a sprite;
+the fixture's image adapter reports the actual source sprite size.
 It verifies a valid tile copy from padded source rows, a valid archive tile
 span, and SDL's row-alignment representation. SDL reports a 260-byte pitch for
 the 64-pixel ARGB32 source row with four padding bytes. An ordinary one-row
@@ -33,3 +35,23 @@ keep the checks bounded and are not complete engine implementations. The sprite
 adapter uses the real class declaration and SDL's measured byte pitch.
 No malformed-input or baseline cases are run by these two scripts. Passing
 these checks is not full plugin-build, renderer, gameplay, or content acceptance.
+
+`test_valid_palette_load.py` checks the production `Interface::LoadPalette`
+template with the shipped demo and minimal palettes:
+
+```sh
+python3 gemrb/tests/security/test_valid_palette_load.py \
+  --config-directory build --output palette-result.json
+```
+
+Its six ordinary cases include the demo's 12-by-88 `pal16.png`, whose twelve
+meaningful colors must fit the 16-entry destination without reading beyond the
+source row. It also checks the 256-by-1 demo and minimal images at the supported
+destination widths. Every copied color is compared with libpng's decoded image,
+and any unused suffix is checked to be `Color{}`, including after prefilled rows
+are reloaded. The fixture compiles the complete actual Sprite2D, pixel iterator,
+Region, Palette and MurmurHash implementations with their real headers, using
+SDL's actual byte pitch without creating a display. Only resource lookup and
+fatal logging are bounded adapters. `--resource-root` can supply the tracked
+assets when an isolated source overlay omits demo data. This is not a full
+Interface initialization or proof of an asset-free library mode.

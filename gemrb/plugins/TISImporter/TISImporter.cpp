@@ -11,6 +11,7 @@
 
 #include "Logging/Logging.h"
 #include "Video/ImageBufferSize.h"
+#include "Video/ImageCopyBounds.h"
 #include "Video/Video.h"
 
 using namespace GemRB;
@@ -129,6 +130,8 @@ void TISImporter::Blit(const TISPVRBlock& dataBlock, uint8_t* frameData)
 	}
 
 	if (!lastPVRZ) return;
+	const auto sourceSize = lastPVRZ->GetSize();
+	if (!ImageContainsRect(sourceSize.w, sourceSize.h, dataBlock.source.x, dataBlock.source.y, TileSize, TileSize)) return;
 	auto sprite = lastPVRZ->GetSprite2D(Region { dataBlock.source.x, dataBlock.source.y, static_cast<int>(TileSize), static_cast<int>(TileSize) });
 	if (!sprite || sprite->Format().Bpp != 4 || sprite->Frame.w < int(TileSize) ||
 	    sprite->Frame.h < int(TileSize) || sprite->GetPitch() < size_t(TileSize) * 4) {

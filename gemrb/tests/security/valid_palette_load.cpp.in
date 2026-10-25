@@ -1,0 +1,88 @@
+// SPDX-FileCopyrightText: 2026 Contributors to the GemRB project <https://gemrb.org>
+// SPDX-License-Identifier: GPL-2.0-or-later
+#include "Sprite2D.h"
+#include "Logging/Logging.h"
+#include <SDL.h>
+#include <png.h>
+#include <algorithm>
+#include <cstdlib>
+#include <iostream>
+#include <memory>
+#include <string>
+#include <vector>
+
+namespace GemRB {
+const LOG_FMT Logger::MSG_STYLE {};
+void LogMsg(Logger::LogMessage&&) { std::abort(); }
+}
+
+namespace PaletteFixture {
+using namespace GemRB;
+using ResRef = std::string;
+template<typename T> using ResourceHolder = std::shared_ptr<T>;
+struct ImageMgr {
+    Holder<Sprite2D> image;
+    Holder<Sprite2D> GetSprite2D() { return image; }
+};
+struct GameData {
+    ResourceHolder<ImageMgr> resource;
+    template<typename T> ResourceHolder<T> GetResourceHolder(const ResRef&) { return resource; }
+} storage;
+GameData* gamedata = &storage;
+struct Consumer {
+@LOAD_PALETTE@
+};
+
+template<int SIZE>
+void Check(const char* path, int width, int height) {
+    png_image image {};
+    image.version = PNG_IMAGE_VERSION;
+    if (!png_image_begin_read_from_file(&image, path)) throw std::runtime_error(image.message);
+    if (image.width != unsigned(width) || image.height != unsigned(height)) throw std::runtime_error("unexpected shipped asset dimensions");
+    image.format = PNG_FORMAT_RGBA;
+    std::vector<uint8_t> reference(PNG_IMAGE_SIZE(image));
+    if (!png_image_finish_read(&image, nullptr, reference.data(), 0, nullptr)) throw std::runtime_error(image.message);
+    png_image_free(&image);
+    void* pixels = std::malloc(reference.size());
+    if (!pixels) throw std::bad_alloc();
+    std::copy(reference.begin(), reference.end(), static_cast<uint8_t*>(pixels));
+    SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormatFrom(pixels, width, height, 32, width * 4, SDL_PIXELFORMAT_RGBA32);
+    if (!surface) throw std::runtime_error(SDL_GetError());
+    const auto* f = surface->format;
+    PixelFormat format(f->Rloss, f->Gloss, f->Bloss, f->Aloss,
+                       f->Rshift, f->Gshift, f->Bshift, f->Ashift,
+                       f->Rmask, f->Gmask, f->Bmask, f->Amask,
+                       f->BytesPerPixel, f->BitsPerPixel, 0, false, false, {});
+    storage.resource = std::make_shared<ImageMgr>();
+    storage.resource->image = MakeHolder<Sprite2D>(Region(0, 0, width, height), pixels, format, uint16_t(surface->pitch));
+    // Prefill rows so reloading must clear the unused suffix explicitly.
+    ColorPal<SIZE> old;
+    old.fill(Color(99, 98, 97, 96));
+    std::vector<ColorPal<SIZE>> palettes(height, old);
+    Consumer consumer;
+    if (!consumer.LoadPalette<SIZE>("shipped-palette", palettes) || palettes.size() != size_t(height)) throw std::runtime_error("palette load failed");
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < SIZE; ++x) {
+            Color expected;
+            if (x < width) {
+                size_t p = (size_t(y) * width + x) * 4;
+                expected = Color(reference[p], reference[p + 1], reference[p + 2], reference[p + 3]);
+            }
+            if (palettes[y][x] != expected) throw std::runtime_error("palette pixels or suffix differ");
+        }
+    }
+    SDL_FreeSurface(surface);
+    storage.resource.reset();
+    std::cout << "shipped palette " << width << 'x' << height << " -> " << SIZE << " columns: PASS\n";
+}
+}
+
+int main(int argc, char** argv) {
+    if (argc != 4) return 2;
+    PaletteFixture::Check<16>(argv[1], 12, 88);
+    PaletteFixture::Check<32>(argv[2], 256, 1);
+    PaletteFixture::Check<256>(argv[2], 256, 1);
+    PaletteFixture::Check<16>(argv[3], 256, 1);
+    PaletteFixture::Check<32>(argv[3], 256, 1);
+    PaletteFixture::Check<256>(argv[3], 256, 1);
+}
