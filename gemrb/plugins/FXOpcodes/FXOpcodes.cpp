@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "damages.h"
 #include "defsounds.h"
 #include "ie_feats.h" //cannot avoid declaring these
 #include "ie_stats.h"
@@ -24,7 +25,6 @@
 #include "ScriptedAnimation.h"
 #include "Spell.h" //needed for fx_cast_spell feedback
 #include "TileMap.h" //needs for knock!
-#include "damages.h"
 
 #include "GUI/GameControl.h"
 #include "GameScript/GSUtils.h" //needs for MoveBetweenAreasCore
@@ -35,6 +35,8 @@
 #include "Scriptable/Door.h"
 #include "Scriptable/InfoPoint.h"
 #include "Scriptable/PCStatStruct.h" //fx_polymorph (action definitions)
+
+#include <limits>
 
 using namespace GemRB;
 
@@ -3140,6 +3142,22 @@ int fx_cure_feebleminded_state(Scriptable* /*Owner*/, Actor* target, Effect* /*f
 	return FX_NOT_APPLIED;
 }
 
+// Build the full period before adjusting it, preserving odd-tick haste rounding.
+// GetAdjustedTime(2) identifies the current scale: haste=1, normal=2, slow=4.
+// Both calls are synchronous and the adjustment only reads the effect queue.
+static tick_t GetPeriodicEffectInterval(const Actor* target, ieDword frequency, ieDword seconds = 1)
+{
+	tick_t limit = std::numeric_limits<tick_t>::max();
+	if (target->GetAdjustedTime(2) == 4) limit /= 2;
+	tick_t period = core->Time.defaultTicksPerSec;
+	const tick_t multiplier = frequency ? frequency : 1;
+	if (!period || !seconds || multiplier > limit / period) return 0;
+	period *= multiplier;
+	if (seconds > limit / period) return 0;
+	period *= seconds;
+	return target->GetAdjustedTime(period);
+}
+
 // 0x4e State:Diseased
 int fx_set_diseased_state(Scriptable* Owner, Actor* target, Effect* fx)
 {
@@ -3157,22 +3175,27 @@ int fx_set_diseased_state(Scriptable* Owner, Actor* target, Effect* fx)
 	ieDword damage = 0;
 	ieDword damageType = DAMAGE_POISON;
 	// fx->Parameter4 is an optional frequency multiplier
-	ieDword aRound = (fx->Parameter4 ? fx->Parameter4 : 1) * core->Time.defaultTicksPerSec;
+	const tick_t timeStep = GetPeriodicEffectInterval(target, fx->Parameter4);
 
 	HandlePercentageDamage(fx, target);
 
 	switch (fx->Parameter2) {
 		case RPD_SECONDS:
-			damage = 1;
-			if (fx->Parameter1 && (core->GetGame()->GameTime % target->GetAdjustedTime(fx->Parameter1 * aRound))) {
-				return FX_APPLIED;
+			{
+				damage = 1;
+				if (fx->Parameter1) {
+					const tick_t interval = GetPeriodicEffectInterval(target, fx->Parameter4, fx->Parameter1);
+					if (!interval) return FX_NOT_APPLIED;
+					if (core->GetGame()->GameTime % interval) return FX_APPLIED;
+				}
+				break;
 			}
-			break;
 		case RPD_PERCENT: // handled in HandlePercentageDamage
 		case RPD_POINTS:
 			damage = fx->Parameter1;
 			// per second
-			if (core->GetGame()->GameTime % target->GetAdjustedTime(aRound)) {
+			if (!timeStep) return FX_NOT_APPLIED;
+			if (core->GetGame()->GameTime % timeStep) {
 				return FX_APPLIED;
 			}
 			break;
@@ -3216,9 +3239,10 @@ int fx_set_diseased_state(Scriptable* Owner, Actor* target, Effect* fx)
 			break;
 		case RPD_MOLD2:
 		case RPD_MOLD: //mold touch (how)
+			if (!timeStep) return FX_NOT_APPLIED;
 			EXTSTATE_SET(EXTSTATE_MOLD);
 			target->SetSpellState(SS_MOLDTOUCH);
-			if (core->GetGame()->GameTime % target->GetAdjustedTime(aRound)) {
+			if (core->GetGame()->GameTime % timeStep) {
 				return FX_APPLIED;
 			}
 			if (fx->Parameter1 < 1) {
@@ -3235,7 +3259,8 @@ int fx_set_diseased_state(Scriptable* Owner, Actor* target, Effect* fx)
 		default:
 			damage = 1;
 			// per second
-			if (core->GetGame()->GameTime % target->GetAdjustedTime(aRound)) {
+			if (!timeStep) return FX_NOT_APPLIED;
+			if (core->GetGame()->GameTime % timeStep) {
 				return FX_APPLIED;
 			}
 			break;
@@ -7418,29 +7443,32 @@ int fx_apply_effect_repeat(Scriptable* /*Owner*/, Actor* target, Effect* fx)
 	}
 
 	// fx->Parameter4 is an optional frequency multiplier
-	ieDword aRound = (fx->Parameter4 ? fx->Parameter4 : 1) * core->Time.defaultTicksPerSec;
+	const ieDword seconds = (fx->Parameter2 == 3 || fx->Parameter2 == 4) ? fx->Parameter1 : 1;
+	// A zero period in modes 3/4 has always meant that no repetition is due.
+	const tick_t timeStep = seconds ? GetPeriodicEffectInterval(target, fx->Parameter4, seconds) : 0;
+	if (seconds && !timeStep && fx->Parameter2 <= 4) return FX_NOT_APPLIED;
 	Scriptable* caster = GetCasterObject();
 	switch (fx->Parameter2) {
 		case 0: //once per second
 		case 1: //crash???
-			if (!(core->GetGame()->GameTime % target->GetAdjustedTime(aRound))) {
+			if (!(core->GetGame()->GameTime % timeStep)) {
 				core->ApplyEffect(std::move(newfx), target, caster);
 			}
 			break;
 		case 2: //param1 times every second
-			if (!(core->GetGame()->GameTime % target->GetAdjustedTime(aRound))) {
+			if (!(core->GetGame()->GameTime % timeStep)) {
 				for (ieDword i = 0; i < fx->Parameter1; i++) {
 					core->ApplyEffect(std::make_unique<Effect>(*newfx), target, caster);
 				}
 			}
 			break;
 		case 3: //once every Param1 second
-			if (fx->Parameter1 && !(core->GetGame()->GameTime % target->GetAdjustedTime(fx->Parameter1 * aRound))) {
+			if (fx->Parameter1 && !(core->GetGame()->GameTime % timeStep)) {
 				core->ApplyEffect(std::move(newfx), target, caster);
 			}
 			break;
 		case 4: //param3 times every Param1 second
-			if (fx->Parameter1 && !(core->GetGame()->GameTime % target->GetAdjustedTime(fx->Parameter1 * aRound))) {
+			if (fx->Parameter1 && !(core->GetGame()->GameTime % timeStep)) {
 				for (ieDword i = 0; i < fx->Parameter3; i++) {
 					core->ApplyEffect(std::make_unique<Effect>(*newfx), target, caster);
 				}
