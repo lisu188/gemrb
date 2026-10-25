@@ -1,0 +1,29 @@
+name: Periodic effect interval compatibility
+
+on:
+  pull_request:
+    paths:
+      - gemrb/plugins/FXOpcodes/FXOpcodes.cpp
+      - gemrb/core/Scriptable/Actor.cpp
+      - gemrb/tests/security/test_periodic_intervals.py
+      - .github/workflows/periodic-intervals.yml
+  push:
+    branches: [master]
+    paths:
+      - gemrb/plugins/FXOpcodes/FXOpcodes.cpp
+      - gemrb/core/Scriptable/Actor.cpp
+      - gemrb/tests/security/test_periodic_intervals.py
+      - .github/workflows/periodic-intervals.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ordinary-periods:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check production interval helper with 32-bit and 64-bit tick types
+        run: python3 gemrb/tests/security/test_periodic_intervals.py
