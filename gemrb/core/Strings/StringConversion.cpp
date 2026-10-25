@@ -50,12 +50,6 @@ static String StringFromEncodedData(const void* inptr, size_t length, const std:
 	return buffer;
 }
 
-template<typename VIEW>
-String StringFromEncodedView(const VIEW& view, const EncodingStruct& encoding)
-{
-	return StringFromEncodedData(view.c_str(), view.length() * sizeof(typename VIEW::value_type), encoding.encoding);
-}
-
 String StringFromEncodedView(const StringView& view, const EncodingStruct& encoding)
 {
 	return StringFromEncodedData(view.c_str(), view.length(), encoding.encoding);
@@ -70,14 +64,13 @@ String StringFromASCII(const StringView& asciiview)
 String StringFromTLK(const StringView& tlkview)
 {
 	const EncodingStruct& encoding = core->TLKEncoding;
+	size_t byteLength = tlkview.length();
 	if (encoding.widechar) {
-		const wchar_t* str = reinterpret_cast<const wchar_t*>(tlkview.c_str());
-		size_t len = tlkview.length() / sizeof(wchar_t);
-		StringViewImp<const wchar_t> wideView(str, len);
-		return StringFromEncodedView(wideView, core->TLKEncoding);
-	} else {
-		return StringFromEncodedView(tlkview, core->TLKEncoding);
+		// Preserve the complete-wide-character byte count without treating TLK
+		// byte storage as an aligned array of wchar_t.
+		byteLength -= byteLength % sizeof(wchar_t);
 	}
+	return StringFromEncodedData(tlkview.c_str(), byteLength, encoding.encoding);
 }
 
 String StringFromUtf8(const StringView& utf8view)
