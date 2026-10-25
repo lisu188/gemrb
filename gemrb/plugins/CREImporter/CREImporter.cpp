@@ -751,7 +751,8 @@ CRESpellMemorization* CREImporter::GetSpellMemorization(Actor* act)
 	str->ReadDword(MemorizedCount);
 
 	CRESpellMemorization* spl = act->spellbook.GetSpellMemorization(Type, Level);
-	assert(spl && spl->SlotCount == 0 && spl->SlotCountWithBonus == 0); // unused
+	if (!spl) return nullptr;
+	assert(spl->SlotCount == 0 && spl->SlotCountWithBonus == 0); // unused
 	spl->SlotCount = Number;
 	spl->SlotCountWithBonus = Number; // Number2? Doesn't look like it's different in the data
 
@@ -1165,6 +1166,10 @@ void CREImporter::ReadSpellbook(Actor* act)
 	str->Seek(SpellMemorizationOffset + CREOffset, GEM_STREAM_START);
 	for (unsigned int i = 0; i < SpellMemorizationCount; i++) {
 		CRESpellMemorization* sm = GetSpellMemorization(act);
+		if (!sm) {
+			Log(WARNING, "CREImporter", "Ignoring unsupported spell memorization page.");
+			continue;
+		}
 
 		unsigned int j = KnownSpellsCount;
 		while (j--) {
@@ -1406,12 +1411,16 @@ void CREImporter::GetIWD2Spellpage(Actor* act, ieIWD2SpellType type, int level, 
 
 	int i = maxCount;
 	CRESpellMemorization* sm = act->spellbook.GetSpellMemorization(type, level);
-	assert(sm && sm->SlotCount == 0 && sm->SlotCountWithBonus == 0); // unused
+	if (sm) {
+		assert(sm->SlotCount == 0 && sm->SlotCountWithBonus == 0); // unused
+	}
 	while (i--) {
 		str->ReadDword(spellindex);
 		str->ReadDword(totalcount);
 		str->ReadDword(memocount);
 		str->Seek(4, GEM_CURRENT_POS);
+		// Retain page-record consumption even when the spellbook rejects it.
+		if (!sm) continue;
 		const ResRef& tmp = ResolveSpellIndex(spellindex, level, type, act->BaseStats[IE_KIT]);
 		if (tmp.IsEmpty()) {
 			Log(ERROR, "CREImporter", "Unresolved spell index: {} level:{}, type: {}",

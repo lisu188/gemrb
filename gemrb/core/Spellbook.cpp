@@ -721,6 +721,7 @@ void Spellbook::SetMemorizableSpellsCount(int Value, int type, unsigned int leve
 	}
 
 	CRESpellMemorization* sm = GetSpellMemorization(type, level);
+	if (!sm) return;
 	if (bonus) {
 		if (!Value) {
 			Value = sm->SlotCountWithBonus;
