@@ -118,6 +118,9 @@ public class GemRB extends SDLActivity {
                   throw new IOException("Invalid absolute or platform-dependent asset path");
               }
               File destFile = new File(destination, relativePath).getCanonicalFile();
+              if (entry.isDirectory() && destFile.equals(destination)) {
+                  continue;
+              }
               if (!destFile.getPath().startsWith(destinationPath)) {
                   throw new IOException("Asset entry escapes extraction directory");
               }

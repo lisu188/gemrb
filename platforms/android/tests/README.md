@@ -10,7 +10,8 @@ python3 -B platforms/android/tests/test_legacy_asset_extraction.py
 It compiles the complete production extraction method unchanged with a host
 JDK (`java` and `javac` on `PATH`, Java 8 target) and replaces only its Android
 activity shell. Synthetic ZIP fixtures verify exact `assets/` filtering, nested
-and Unicode assets, directory entries, parent/sibling traversal, absolute and
+and Unicode assets, normalized root directory entries (but not root-resolving
+files), parent/sibling traversal, absolute and
 backslash names, an invalid output root, and an existing symlink escape when
 the host permits creating one. Rejected entries preserve outside canaries.
 Fixtures and compiler output live only in test-owned temporary directories.

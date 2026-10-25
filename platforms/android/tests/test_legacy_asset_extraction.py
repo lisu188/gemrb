@@ -104,6 +104,24 @@ class LegacyAssetExtractionTest(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual(["normal.txt"], sorted(p.name for p in self.destination.iterdir()))
 
+    def test_normalized_root_directory_entries_are_allowed(self):
+        result = self.extract([
+            ("assets/./", b""),
+            ("assets/folder/../", b""),
+            ("assets/normal.txt", b"normal"),
+        ])
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(b"normal", (self.destination / "normal.txt").read_bytes())
+
+    def test_root_resolving_file_entries_are_rejected(self):
+        self.destination.mkdir()
+        canary = self.destination / "existing.txt"
+        canary.write_bytes(b"keep existing data")
+        for entry in ("assets/.", "assets/folder/.."):
+            with self.subTest(entry=entry):
+                self.assert_refused(entry)
+                self.assertEqual(b"keep existing data", canary.read_bytes())
+
     def test_parent_traversal_preserves_outside_file(self):
         outside = self.root / "outside.txt"
         outside.write_bytes(b"keep existing data")
