@@ -20,7 +20,7 @@ using ResRef = std::string;
 namespace fmt { template<typename... T> std::string format(const char*, const T&...) { return {}; } }
 struct Region { int x, y, w, h; };
 struct PixelFormat {
-    int BytesPerPixel = 4;
+    uint8_t Bpp = 4;
     static PixelFormat ARGB32Bit() { return {}; }
 };
 class DataStream {
