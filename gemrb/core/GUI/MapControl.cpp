@@ -49,7 +49,11 @@ void MapControl::DrawFog(const Region& rgn) const
 	Point gameP = p;
 
 	std::vector<BasePoint> points;
-	points.reserve(rgn.w * rgn.h);
+	if (rgn.w <= 0 || rgn.h <= 0 || mosRgn.w <= 0 || mosRgn.h <= 0) return;
+	const size_t width = static_cast<size_t>(rgn.w);
+	const size_t height = static_cast<size_t>(rgn.h);
+	if (height > points.max_size() / width) return;
+	points.reserve(width * height);
 
 	for (; p.y < rgn.h; ++p.y) {
 		gameP.y = int(p.y * double(mapsize.h) / mosRgn.h);
