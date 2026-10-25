@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2013 Contributors to the GemRB project <https://gemrb.org>
+// SPDX-FileCopyrightText: 2013-2026 Contributors to the GemRB project <https://gemrb.org>
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -94,45 +94,49 @@ public class GemRB extends SDLActivity {
   }
 
   private static void extractFolder(String zipFile, String newPath) throws ZipException, IOException {
-      int BUFFER = 1024 * 1024;
-      File file = new File(zipFile);
+      File destination = new File(newPath).getCanonicalFile();
+      if (!destination.isDirectory() && !destination.mkdirs()) {
+          throw new IOException("Cannot create asset extraction directory");
+      }
+      String destinationPath = destination.getPath() + File.separator;
+      String assetPrefix = "assets/";
+      byte[] data = new byte[1024 * 1024];
 
-      ZipFile zip = new ZipFile(file);
-
-      new File(newPath).mkdir();
-      Enumeration zipFileEntries = zip.entries();
-
-      // establish buffer for writing file
-      byte data[] = new byte[BUFFER];
-      // Process each entry
-      while (zipFileEntries.hasMoreElements()) {
-          // grab a zip file entry
-          ZipEntry entry = (ZipEntry) zipFileEntries.nextElement();
-          String currentEntry = entry.getName();
-          if(!currentEntry.contains("asset")) {
-            continue;
-          }
-          File destFile = new File(newPath, currentEntry.substring(7)); // 6th index should be "/" of "assets/"
-          //destFile = new File(newPath, destFile.getName());
-          File destinationParent = destFile.getParentFile();
-
-          // create the parent directory structure if needed
-          destinationParent.mkdirs();
-
-          if (!entry.isDirectory()) {
-              InputStream is = zip.getInputStream(entry);
-              int currentByte;
-
-              // write the current file to disk
-              FileOutputStream dest = new FileOutputStream(destFile);
-
-              // read and write until last byte is encountered
-              while ((currentByte = is.read(data, 0, BUFFER)) != -1) {
-                  dest.write(data, 0, currentByte);
+      try (ZipFile zip = new ZipFile(zipFile)) {
+          Enumeration<? extends ZipEntry> entries = zip.entries();
+          while (entries.hasMoreElements()) {
+              ZipEntry entry = entries.nextElement();
+              String currentEntry = entry.getName();
+              if (!currentEntry.startsWith(assetPrefix)) {
+                  continue;
               }
-              dest.flush();
-              dest.close();
-              is.close();
+              String relativePath = currentEntry.substring(assetPrefix.length());
+              if (relativePath.isEmpty() && entry.isDirectory()) {
+                  continue;
+              }
+              if (new File(relativePath).isAbsolute() || relativePath.indexOf('\\') >= 0) {
+                  throw new IOException("Invalid absolute or platform-dependent asset path");
+              }
+              File destFile = new File(destination, relativePath).getCanonicalFile();
+              if (entry.isDirectory() && destFile.equals(destination)) {
+                  continue;
+              }
+              if (!destFile.getPath().startsWith(destinationPath)) {
+                  throw new IOException("Asset entry escapes extraction directory");
+              }
+              File directory = entry.isDirectory() ? destFile : destFile.getParentFile();
+              if (!directory.isDirectory() && !directory.mkdirs()) {
+                  throw new IOException("Cannot create asset directory");
+              }
+              if (!entry.isDirectory()) {
+                  try (InputStream input = zip.getInputStream(entry);
+                       FileOutputStream output = new FileOutputStream(destFile)) {
+                      int count;
+                      while ((count = input.read(data)) != -1) {
+                          output.write(data, 0, count);
+                      }
+                  }
+              }
           }
       }
   }
