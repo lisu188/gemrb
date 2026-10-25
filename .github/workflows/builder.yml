@@ -11,6 +11,9 @@ on:
   pull_request:
     branches: [ master ]
 
+permissions:
+  contents: read
+
 jobs:
   tester:
     name: Test runner linux build
@@ -306,3 +309,4 @@ jobs:
         filepath="$filepath/$fileo"
         scp $filei \
         gemrb-travisbot@frs.sourceforge.net:/home/frs/project/gemrb/Buildbot\\\ Binaries/$filepath
+
