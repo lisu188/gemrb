@@ -355,6 +355,7 @@ Holder<Sprite2D> SDLVideoDriver::CreateSprite(const Region& rgn, void* pixels, c
 		// SDL2 should not allow RLE sprites so convert it
 		void* newpixels = DecodeRLEData(static_cast<uint8_t*>(pixels), rgn.size, fmt.ColorKey);
 		free(pixels);
+		if (!newpixels) return nullptr;
 		PixelFormat newfmt = fmt;
 		newfmt.RLE = false;
 		return MakeHolder<sprite_t>(rgn, newpixels, newfmt);
