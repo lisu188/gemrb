@@ -348,7 +348,8 @@ Window* WindowManager::GetFocusWindow() const
 	return gameWin;
 }
 
-static inline Point ScreenPosFromEvent(const Event& e) {
+static inline Point ScreenPosFromEvent(const Event& e)
+{
 	if (Event::EventMaskFromType(e.type) & Event::AllControllerMask) {
 		// controller events use ControllerEvent in the union, not MouseEvent
 		// the cursor position is tracked separately via EventMgr::MousePos()
@@ -601,6 +602,7 @@ void WindowManager::DrawWindowFrame(BlitFlags flags) const
 		Holder<Sprite2D> right_edge = WinFrameEdge(1);
 		Holder<Sprite2D> top_edge = WinFrameEdge(2);
 		Holder<Sprite2D> bot_edge = WinFrameEdge(3);
+		if (!right_edge || !top_edge || !bot_edge) return;
 
 		int left_w = left_edge->Frame.w;
 		int right_w = right_edge->Frame.w;

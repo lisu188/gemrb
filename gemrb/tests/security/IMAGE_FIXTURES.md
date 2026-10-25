@@ -17,6 +17,8 @@ decoded byte layout with libpng. The TIS/BIF check also needs SDL2 development
 files and a CMake build directory containing GemRB's generated `config.h`.
 It includes the actual `Sprite2D`, `PixelFormat` and geometry headers, extracts
 the used production constructors/accessors, and creates real SDL surfaces.
+The TIS crop also checks the source image dimensions before requesting a sprite;
+the fixture's image adapter reports the actual source sprite size.
 It verifies a valid tile copy from padded source rows, a valid archive tile
 span, and SDL's row-alignment representation. SDL reports a 260-byte pitch for
 the 64-pixel ARGB32 source row with four padding bytes. An ordinary one-row

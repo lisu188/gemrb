@@ -652,6 +652,7 @@ private:
 		ResourceHolder<ImageMgr> palim = gamedata->GetResourceHolder<ImageMgr>(resref);
 		if (palim) {
 			auto image = palim->GetSprite2D();
+			if (!image || image->Frame.w < SIZE || image->Frame.h <= 0) return false;
 			int height = image->Frame.h;
 			palettes.resize(height);
 			Region clip(0, 0, SIZE, height);
