@@ -163,6 +163,11 @@ static Holder<Sprite2D> LoadImageAs8bit(const ResRef& resref)
 	return spr;
 }
 
+static bool CanScaleMapNotes(const Map& map)
+{
+	return map.SmallMap && !map.SmallMap->Frame.size.IsInvalid() && !map.GetSize().IsInvalid();
+}
+
 // override some diagonal-only transitions to save on pathfinding time
 static void OverrideMaterialMap(const ResRef& wedRef, Holder<Sprite2D> searchMap)
 {
@@ -405,7 +410,8 @@ bool AREImporter::ChangeMap(Map* map, bool day_or_night)
 		if (sm) {
 			// night small map is *optional*!
 			// keep the existing map if this one is null
-			map->SmallMap = sm->GetSprite2D();
+			auto smallMap = sm->GetSprite2D();
+			if (smallMap && !smallMap->Frame.size.IsInvalid()) map->SmallMap = std::move(smallMap);
 		}
 
 		//the map state was altered, no need to hold this off for any later
@@ -1290,13 +1296,22 @@ void AREImporter::GetAutomapNotes(DataStream* str, Map* map) const
 		return;
 	}
 
+	if (!CanScaleMapNotes(*map)) {
+		Log(WARNING, "AREImporter", "Skipping automap notes without valid minimap dimensions.");
+		return;
+	}
+
 	auto flag = gamedata->GetFactoryResourceAs<AnimationFactory>("FLAG1", IE_BAM_CLASS_ID);
 	if (flag == nullptr) {
 		ResourceHolder<ImageMgr> roImg = gamedata->GetResourceHolder<ImageMgr>("RONOTE");
 		ResourceHolder<ImageMgr> userImg = gamedata->GetResourceHolder<ImageMgr>("USERNOTE");
 
-		AnimationFactory af("FLAG1", { roImg->GetSprite2D(), userImg->GetSprite2D() }, { { 1, 0 }, { 1, 1 } }, { 0, 1 });
-		gamedata->AddFactoryResource<AnimationFactory>(std::move(af));
+		auto roSprite = roImg ? roImg->GetSprite2D() : nullptr;
+		auto userSprite = userImg ? userImg->GetSprite2D() : nullptr;
+		if (roSprite && userSprite) {
+			AnimationFactory af("FLAG1", { std::move(roSprite), std::move(userSprite) }, { { 1, 0 }, { 1, 1 } }, { 0, 1 });
+			gamedata->AddFactoryResource<AnimationFactory>(std::move(af));
+		}
 	}
 
 	// Load user-added notes, skip any autonote.ini duplicates later
@@ -1466,15 +1481,24 @@ Map* AREImporter::GetMap(const ResRef& resRef, bool day_or_night)
 
 	// Small map for MapControl
 	ResourceHolder<ImageMgr> sm = gamedata->GetResourceHolder<ImageMgr>(TmpResRef);
-	if (!sm) {
-		//fall back to day minimap
+	auto smallMap = sm ? sm->GetSprite2D() : nullptr;
+	if ((!smallMap || smallMap->Frame.size.IsInvalid()) && TmpResRef != WEDResRef) {
+		// A missing or rejected optional night image falls back to the day map.
 		sm = gamedata->GetResourceHolder<ImageMgr>(WEDResRef);
+		smallMap = sm ? sm->GetSprite2D() : nullptr;
+	}
+	if (smallMap && smallMap->Frame.size.IsInvalid()) smallMap.reset();
+	if (core->HasFeature(GFFlags::AUTOMAP_INI) && NoteCount && !smallMap) {
+		Log(ERROR, "AREImporter", "Cannot load stored automap notes without a valid minimap.");
+		delete tm;
+		return nullptr;
 	}
 
 	Map* map = nullptr;
 	try {
-		map = new Map(tm, MakeTileProps(tm, WEDResRef, day_or_night), sm ? sm->GetSprite2D() : nullptr);
+		map = new Map(tm, MakeTileProps(tm, WEDResRef, day_or_night), std::move(smallMap));
 	} catch (const std::exception& e) {
+		delete tm;
 		Log(ERROR, "AREImporter", "{}", e);
 		return nullptr;
 	}
