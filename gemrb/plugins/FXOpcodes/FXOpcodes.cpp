@@ -1918,6 +1918,22 @@ int fx_set_panic_state(Scriptable* /*Owner*/, Actor* target, Effect* fx)
 	return FX_PERMANENT;
 }
 
+// Build the full period before adjusting it, preserving odd-tick haste rounding.
+// GetAdjustedTime(2) identifies the current scale: haste=1, normal=2, slow=4.
+// Both calls are synchronous and the adjustment only reads the effect queue.
+static tick_t GetPeriodicEffectInterval(const Actor* target, ieDword frequency, ieDword seconds = 1)
+{
+	tick_t limit = std::numeric_limits<tick_t>::max();
+	if (target->GetAdjustedTime(2) == 4) limit /= 2;
+	tick_t period = core->Time.defaultTicksPerSec;
+	const tick_t multiplier = frequency ? frequency : 1;
+	if (!period || !seconds || multiplier > limit / period) return 0;
+	period *= multiplier;
+	if (seconds > limit / period) return 0;
+	period *= seconds;
+	return target->GetAdjustedTime(period);
+}
+
 // 0x19 State:Poisoned
 int fx_set_poisoned_state(Scriptable* /*Owner*/, Actor* target, Effect* fx)
 {
@@ -1958,9 +1974,15 @@ int fx_set_poisoned_state(Scriptable* /*Owner*/, Actor* target, Effect* fx)
 		if (fx->FirstApply) {
 			fx->Parameter5 = totalDamage;
 			if (fx->Parameter1 == 0) fx->Parameter1++;
-		} else if (core->GetGame()->GameTime % timeStep == 0) { // only if we're dealing damage in this run
-			if (signed(fx->Parameter5) <= 0) return FX_ABORT;
-			fx->Parameter5 -= fx->Parameter1;
+		} else {
+			// Only this branch divides by the adjusted base interval. Other modes
+			// retain their existing adjustment-then-multiplier scheduling.
+			timeStep = GetPeriodicEffectInterval(target, fx->Parameter4);
+			if (!timeStep) return FX_NOT_APPLIED;
+			if (core->GetGame()->GameTime % timeStep == 0) { // only if we're dealing damage in this run
+				if (signed(fx->Parameter5) <= 0) return FX_ABORT;
+				fx->Parameter5 -= fx->Parameter1;
+			}
 		}
 	}
 
@@ -3140,22 +3162,6 @@ int fx_cure_feebleminded_state(Scriptable* /*Owner*/, Actor* target, Effect* /*f
 	target->fxqueue.RemoveAllEffects(fx_set_feebleminded_state_ref);
 	target->fxqueue.RemoveAllEffectsWithParam(fx_display_portrait_icon_ref, static_cast<ieDword>(PI::FEEBLEMIND));
 	return FX_NOT_APPLIED;
-}
-
-// Build the full period before adjusting it, preserving odd-tick haste rounding.
-// GetAdjustedTime(2) identifies the current scale: haste=1, normal=2, slow=4.
-// Both calls are synchronous and the adjustment only reads the effect queue.
-static tick_t GetPeriodicEffectInterval(const Actor* target, ieDword frequency, ieDword seconds = 1)
-{
-	tick_t limit = std::numeric_limits<tick_t>::max();
-	if (target->GetAdjustedTime(2) == 4) limit /= 2;
-	tick_t period = core->Time.defaultTicksPerSec;
-	const tick_t multiplier = frequency ? frequency : 1;
-	if (!period || !seconds || multiplier > limit / period) return 0;
-	period *= multiplier;
-	if (seconds > limit / period) return 0;
-	period *= seconds;
-	return target->GetAdjustedTime(period);
 }
 
 // 0x4e State:Diseased
