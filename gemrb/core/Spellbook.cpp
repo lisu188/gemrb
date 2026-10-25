@@ -639,7 +639,7 @@ bool Spellbook::AddSpellMemorization(Holder<CRESpellMemorization> sm)
 	auto s = &spells[sm->Type];
 	//when loading, level starts on 0
 	unsigned int level = sm->Level;
-	if (level > MAX_SPELL_LEVEL) {
+	if (level > MAX_SPELL_LEVEL || s->size() > level) {
 		return false;
 	}
 
@@ -691,7 +691,7 @@ void Spellbook::ClearBonus()
 
 CRESpellMemorization* Spellbook::GetSpellMemorization(unsigned int type, unsigned int level)
 {
-	if (type >= (unsigned int) NUM_BOOK_TYPES) {
+	if (type >= (unsigned int) NUM_BOOK_TYPES || level > MAX_SPELL_LEVEL) {
 		return nullptr;
 	}
 

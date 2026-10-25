@@ -2458,8 +2458,8 @@ int CREImporter::PutSpellPages(DataStream* stream, const Actor* actor) const
 	int type = actor->spellbook.GetTypes();
 	for (int i = 0; i < type; i++) {
 		unsigned int level = actor->spellbook.GetSpellLevelCount(i);
-		for (ieWord j = 0; j < level; ++j) {
-			stream->WriteScalar(j);
+		for (unsigned int j = 0; j < level; ++j) {
+			stream->WriteScalar<unsigned int, ieWord>(j);
 			ieDword tmpDword = actor->spellbook.GetMemorizedSpellsCount(i, j, false);
 			int tmp = actor->spellbook.GetMemorizableSpellsCount(i, j, false);
 			stream->WriteScalar<int, ieWord>(tmp);
