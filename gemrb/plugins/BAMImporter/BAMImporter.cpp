@@ -46,7 +46,8 @@ bool BAMImporter::Import(DataStream* str)
 	} else {
 		if (str->ReadDword(frameCount) != 4) return false;
 	}
-	if (frameCount > std::numeric_limits<index_t>::max()) return false;
+	// AnimationFactory reserves the maximum index as InvalidIndex.
+	if (frameCount >= std::numeric_limits<index_t>::max()) return false;
 	frames.resize(frameCount);
 
 	ieDword cycleCount = 0;
@@ -57,7 +58,7 @@ bool BAMImporter::Import(DataStream* str)
 	} else {
 		if (str->ReadDword(cycleCount) != 4) return false;
 	}
-	if (cycleCount > std::numeric_limits<index_t>::max()) return false;
+	if (cycleCount >= std::numeric_limits<index_t>::max()) return false;
 	cycles.resize(cycleCount);
 
 	ieDword dataBlockCount = 0;
