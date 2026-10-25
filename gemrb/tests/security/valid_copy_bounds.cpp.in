@@ -60,7 +60,7 @@ struct FixtureSprite : Sprite2D {
     std::vector<uint8_t> storage;
     SDL_Surface* surface = nullptr;
     FixtureSprite(int width, int height, PixelFormat fmt, uint16_t stride)
-        : Sprite2D(Region(0, 0, width, height), nullptr, fmt, stride), storage(size_t(stride) * height, 0xee) {
+        : Sprite2D(Region(0, 0, width, height), nullptr, fmt, stride), storage(std::max<size_t>(1, size_t(stride) * height), 0xee) {
         surface = SDL_CreateRGBSurfaceFrom(storage.data(), width, height, fmt.Depth, stride, fmt.Rmask, fmt.Gmask, fmt.Bmask, fmt.Amask);
         if (!surface) throw std::runtime_error(SDL_GetError());
         pitch = surface->pitch;
@@ -89,8 +89,9 @@ struct Driver {
             decoded.RLE = false;
         }
         const size_t rowBytes = size_t(region.w) * decoded.Bpp;
-        const uint16_t stride = (rowBytes + 3) / 4 * 4;
+        const uint16_t stride = region.w && region.h ? (rowBytes + 3) / 4 * 4 : rowBytes;
         auto sprite = std::make_shared<FixtureSprite>(region.w, region.h, decoded, stride);
+        sprite->Frame.origin = region.origin;
         for (int row = 0; row < region.h; ++row) memcpy(sprite->storage.data() + size_t(row) * stride, source + size_t(row) * rowBytes, rowBytes);
         free(source);
         return sprite;
@@ -259,6 +260,19 @@ void bamV2() {
     require(tight(importer.GetV2Frame(importer.frames[0])) == blockOutput(), "BAM V2 padded rows");
     std::cout << "valid BAM V2 padded source pitch and destination subrectangle: PASS\n";
 }
+void emptyBam(bool v2, int width, int height) {
+    BAMImporter importer;
+    importer.palette = MakeHolder<Palette>();
+    FrameEntry frame;
+    frame.bounds = Region(3, -4, width, height);
+    const uint8_t backing = 0;
+    auto sprite = v2 ? importer.GetV2Frame(frame) : importer.GetFrameInternal(frame, false, &backing, 1);
+    require(bool(sprite), "empty glyph sprite");
+    require(sprite->Frame.x == 3 && sprite->Frame.y == -4 && sprite->Frame.w == width && sprite->Frame.h == height, "empty glyph metrics");
+    require(sprite->Format().Bpp == (v2 ? 4 : 1), "empty glyph pixel format");
+    require(v2 || sprite->GetPalette() == importer.palette, "empty glyph palette");
+    std::cout << "valid empty BAM V" << (v2 ? 2 : 1) << " glyph " << width << 'x' << height << ": PASS\n";
+}
 void mosV1(unsigned width, unsigned height) {
     DataStream stream; auto& data = stream.bytes;
     const unsigned cols = (width + 63) / 64, rows = (height + 63) / 64, count = cols * rows;
@@ -291,7 +305,7 @@ void mosV2() {
 int main(int argc, char** argv) {
     try {
         require(argc == 2, "fixture directory argument");
-        for (const std::string name : {"sample.bmp", "sample_8bit.bmp"}) {
+        for (const std::string name : {"sample.bmp", "sample_8bit.bmp", "sample_v3.bmp", "sample_v5.bmp"}) {
             std::ifstream file(std::string(argv[1]) + "/" + name, std::ios::binary);
             require(bool(file), "existing BMP fixture");
             DataStream stream;
@@ -304,7 +318,9 @@ int main(int argc, char** argv) {
         bmp(8, false, 0); bmp(8, true, 4);
         bmp(4, false, 0); bmp(4, true, 4);
         bmp(32, false, 0, 56, true); bmp(32, true, 0, 124);
-        bamV1(); bamV2(); mosV1(64, 64); mosV1(65, 65); mosV2();
+        bamV1(); bamV2();
+        for (bool v2 : {false, true}) { emptyBam(v2, 0, 3); emptyBam(v2, 3, 0); emptyBam(v2, 0, 0); }
+        mosV1(64, 64); mosV1(65, 65); mosV2();
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
     return 0;
 }

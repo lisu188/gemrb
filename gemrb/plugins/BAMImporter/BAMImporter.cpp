@@ -139,6 +139,15 @@ BAMImporter::index_t BAMImporter::GetCycleSize(index_t cycle)
 Holder<Sprite2D> BAMImporter::GetFrameInternal(const FrameEntry& frameInfo, bool RLESprite, const uint8_t* data, size_t dataSize) const
 {
 	const Region& rgn = frameInfo.bounds;
+	if (!rgn.w || !rgn.h) {
+		// Fonts use empty sprites for glyph metrics. Keep their concrete sprite
+		// and palette without reading a pixel from the stream.
+		size_t bytes = 0;
+		if (rgn.w < 0 || rgn.h < 0 || !CheckedImageByteCount(std::max(1, rgn.w), std::max(1, rgn.h), 1, bytes)) return nullptr;
+		void* pixels = calloc(1, 1);
+		if (!pixels) return nullptr;
+		return VideoDriver->CreateSprite(rgn, pixels, PixelFormat::Paletted8Bit(palette, true, CompressedColorIndex));
+	}
 	size_t pixelCount = 0;
 	if (!CheckedImageByteCount(rgn.w, rgn.h, 1, pixelCount) || frameInfo.location.dataOffset < DataStart) return nullptr;
 	const size_t offset = frameInfo.location.dataOffset - DataStart;
@@ -182,6 +191,13 @@ Holder<Sprite2D> BAMImporter::GetFrameInternal(const FrameEntry& frameInfo, bool
 
 Holder<Sprite2D> BAMImporter::GetV2Frame(const FrameEntry& frame)
 {
+	if (!frame.bounds.w || !frame.bounds.h) {
+		size_t bytes = 0;
+		if (frame.bounds.w < 0 || frame.bounds.h < 0 || !CheckedImageByteCount(std::max(1, frame.bounds.w), std::max(1, frame.bounds.h), 4, bytes)) return nullptr;
+		void* pixels = calloc(1, 1);
+		if (!pixels) return nullptr;
+		return VideoDriver->CreateSprite(frame.bounds, pixels, PixelFormat::ARGB32Bit());
+	}
 	size_t frameSize = 0;
 	if (!CheckedImageByteCount(frame.bounds.w, frame.bounds.h, 4, frameSize) || DataStart > str->Size()) return nullptr;
 	// The wire record is seven dwords, independent of host struct padding.
@@ -261,7 +277,7 @@ std::shared_ptr<AnimationFactory> BAMImporter::GetAnimationFactory(const ResRef&
 		if (!data || str->Read(data.get(), length) != strret_t(length)) return nullptr;
 		for (const auto& frame : frames) {
 			auto sprite = GetFrameInternal(frame, allowCompression && frame.RLE, data.get(), length);
-			if (!sprite && frame.bounds.w && frame.bounds.h) return nullptr;
+			if (!sprite) return nullptr;
 			animframes.push_back(std::move(sprite));
 		}
 	} else {
@@ -269,7 +285,7 @@ std::shared_ptr<AnimationFactory> BAMImporter::GetAnimationFactory(const ResRef&
 		for (index_t i = 0; i < frames.size(); ++i) FLT[i] = i;
 		for (const auto& frame : frames) {
 			auto sprite = GetV2Frame(frame);
-			if (!sprite && frame.bounds.w && frame.bounds.h) return nullptr;
+			if (!sprite) return nullptr;
 			animframes.push_back(std::move(sprite));
 		}
 	}

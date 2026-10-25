@@ -1,0 +1,326 @@
+// SPDX-FileCopyrightText: 2026 Contributors to the GemRB project <https://gemrb.org>
+//
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+// The Python driver inserts unchanged production functions at the markers.
+// These bounded stream/rendering adapters isolate parser decisions from the
+// engine and reject runaway loops in the historical negative controls.
+#include <algorithm>
+#include <array>
+#include <climits>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <iostream>
+#include <limits>
+#include <memory>
+#include <stdexcept>
+#include <string>
+#include <vector>
+#include "Video/ImageBufferSize.h"
+
+using GemRB::CheckedImageByteCount;
+
+using ieByte = uint8_t;
+using ieWord = uint16_t;
+using ieDword = uint32_t;
+using strret_t = std::ptrdiff_t;
+using strpos_t = size_t;
+using guint16 = ieWord;
+constexpr int GEM_STREAM_START = 0;
+constexpr int GEM_CURRENT_POS = 1;
+struct Point {
+    int x = 0, y = 0;
+    Point() = default;
+    Point(int x, int y) : x(x), y(y) {}
+};
+struct Size {
+    int w = 0, h = 0;
+    Size() = default;
+    Size(int width, int height) : w(width), h(height) {}
+    int Area() const { return w * h; }
+    bool IsInvalid() const { return w <= 0 || h <= 0; }
+};
+struct Region {
+    Size size;
+    Point origin;
+    Region() = default;
+    Region(int x, int y, int w, int h) : size{w, h}, origin{x, y} {}
+};
+class DataStream {
+public:
+    std::vector<uint8_t> bytes;
+    size_t position = 0;
+    strret_t Read(void* destination, size_t length) {
+        if (length > Remains()) return -1;
+        if (length) std::memcpy(destination, bytes.data() + position, length);
+        position += length;
+        return static_cast<strret_t>(length);
+    }
+    template<typename Destination, typename Source = Destination>
+    strret_t ReadScalar(Destination& value) {
+        Source input = 0;
+        auto result = Read(&input, sizeof(input));
+        value = static_cast<Destination>(input);
+        return result;
+    }
+    strret_t ReadSize(Size& size) {
+        auto result = ReadScalar<int, ieWord>(size.w);
+        return result + ReadScalar<int, ieWord>(size.h);
+    }
+    strret_t ReadPoint(Point& point) {
+        auto result = ReadScalar<int, int16_t>(point.x);
+        return result + ReadScalar<int, int16_t>(point.y);
+    }
+    size_t Size() const { return bytes.size(); }
+    size_t Remains() const { return bytes.size() - position; }
+    strret_t Seek(size_t offset, int origin) {
+        position = origin == GEM_STREAM_START ? offset : position + offset;
+        if (position > bytes.size()) throw std::runtime_error("fixture seek outside stream");
+        return 0;
+    }
+};
+#define ReadDword ReadScalar<ieDword>
+#define ReadWord ReadScalar<ieWord>
+static DataStream* DecompressStream(DataStream* stream) { return stream; }
+static void Require(bool condition, const char* message) {
+    if (!condition) throw std::runtime_error(message);
+}
+static void Dword(std::vector<uint8_t>& out, uint32_t value) {
+    for (unsigned shift = 0; shift < 32; shift += 8) out.push_back((value >> shift) & 0xff);
+}
+static void Word(std::vector<uint8_t>& out, uint16_t value) {
+    out.push_back(value & 0xff); out.push_back(value >> 8);
+}
+static DataStream PLT(uint32_t width, uint32_t height, std::vector<uint8_t> pixels) {
+    DataStream stream;
+    const char signature[] = "PLT V1  ";
+    stream.bytes.assign(signature, signature + 8);
+    stream.bytes.resize(16);
+    Dword(stream.bytes, width); Dword(stream.bytes, height);
+    stream.bytes.insert(stream.bytes.end(), pixels.begin(), pixels.end());
+    return stream;
+}
+class PLTImporter {
+public:
+    ieDword Width = 0, Height = 0;
+    void* pixels = nullptr;
+    ~PLTImporter() { free(pixels); }
+    bool Import(DataStream*);
+};
+@PLT_IMPORT@
+
+namespace Video { enum class BufferFormat { RGB555, RGBPAL8 }; }
+static uint16_t Read16(const uint8_t* bytes) { return uint16_t(bytes[0]) | (uint16_t(bytes[1]) << 8); }
+#define GST_READ_UINT16_LE(data) Read16(data)
+@MVE_LIMIT@
+class MVEPlayer {
+public:
+    enum class FrameResult { OK, ERROR };
+    struct Stream {
+        uint16_t width = 0, height = 0;
+        uint16_t *back_buf1 = nullptr, *back_buf2 = nullptr;
+        uint32_t max_block_offset = 0;
+    } gstData;
+    DataStream* str = nullptr;
+    Video::BufferFormat movieFormat{};
+    std::vector<uint8_t> videoBackBuffer;
+    FrameResult InitializeVideo(uint8_t);
+};
+@MVE_INITIALIZE@
+
+enum class BAMVersion { V1, V2 };
+struct Color { uint8_t r = 0, g = 0, b = 0, a = 0; };
+struct Palette {
+    using Color = ::Color;
+    using Colors = std::array<Color, 256>;
+    void CopyColors(const Colors&) {}
+};
+template<typename T> using Holder = std::shared_ptr<T>;
+template<typename T> static Holder<T> MakeHolder() { return std::make_shared<T>(); }
+class BAMImporter {
+public:
+    using index_t = uint16_t;
+    struct Frame {
+        Region bounds;
+        bool RLE = false;
+        struct Location { size_t dataOffset = 0; struct V2 { uint16_t dataBlockIdx = 0, dataBlockCount = 0; } v2; } location;
+    };
+    struct Cycle { uint16_t FramesCount = 0, FirstFrame = 0; };
+    BAMVersion version{};
+    std::vector<Frame> frames;
+    std::vector<Cycle> cycles;
+    Holder<Palette> palette;
+    ieByte CompressedColorIndex = 0;
+    ieDword FLTOffset = 0, CyclesOffset = 0, FramesOffset = 0;
+    size_t DataStart = 0;
+    bool Import(DataStream*);
+};
+@BAM_IMPORT@
+static DataStream BAM(uint32_t frames, uint32_t cycles) {
+    DataStream stream;
+    const char signature[] = "BAM V2  ";
+    stream.bytes.assign(signature, signature + 8);
+    Dword(stream.bytes, frames); Dword(stream.bytes, cycles); Dword(stream.bytes, 0);
+    Dword(stream.bytes, 32); Dword(stream.bytes, 32 + frames * 12); Dword(stream.bytes, 0);
+    stream.bytes.resize(32 + size_t(frames) * 12 + size_t(cycles) * 4);
+    return stream;
+}
+
+enum class MOSVersion { V1, V2 };
+struct MOSV2DataBlock { ieDword pvrzPage; Point source; Size size; Point destination; };
+struct Sprite2D {};
+struct PixelFormat { static PixelFormat ARGB32Bit() { return {}; } };
+struct VideoAdapter {
+    Holder<Sprite2D> CreateSprite(const Region&, void* pixels, const PixelFormat&) {
+        free(pixels); return std::make_shared<Sprite2D>();
+    }
+} videoAdapter;
+static auto* VideoDriver = &videoAdapter;
+class MOSImporter {
+public:
+    MOSVersion version = MOSVersion::V1;
+    Size size;
+    ieWord Cols = 0, Rows = 0;
+    struct Layout {
+        struct V1 { ieDword BlockSize = 0, PalOffset = 0; } v1;
+        struct V2 { ieDword NumBlocks = 0, BlockOffset = 0; } v2;
+    } layout;
+    DataStream* str = nullptr;
+    size_t blitCalls = 0;
+    bool Blit(const MOSV2DataBlock&, uint8_t*) {
+        if (++blitCalls > size_t(layout.v2.NumBlocks) + 1) throw std::runtime_error("MOS block counter wrapped");
+        return true;
+    }
+    bool Import(DataStream*);
+    Holder<Sprite2D> GetSprite2Dv2();
+};
+@MOS_IMPORT@
+@MOS_SPRITE@
+static DataStream MOS(uint32_t blocks, bool complete = true) {
+    DataStream stream;
+    const char signature[] = "MOS V2  ";
+    stream.bytes.assign(signature, signature + 8);
+    Dword(stream.bytes, 1); Dword(stream.bytes, 1); Dword(stream.bytes, blocks); Dword(stream.bytes, 24);
+    if (complete) stream.bytes.resize(24 + size_t(blocks) * 28);
+    return stream;
+}
+
+struct WallPolygon {};
+struct WallPolygonGroup : std::vector<std::shared_ptr<WallPolygon>> {
+    void push_back(std::shared_ptr<WallPolygon> value) {
+        if (size() > 65537) throw std::runtime_error("WED word counter wrapped");
+        std::vector<std::shared_ptr<WallPolygon>>::push_back(std::move(value));
+    }
+};
+class WEDImporter {
+public:
+    struct Overlay { Size size; };
+    std::vector<Overlay> overlays{{{1, 1}}};
+    DataStream* str = nullptr;
+    ieDword PLTOffset = 0, VerticesOffset = 0, WallGroupsOffset = 0;
+    WallPolygonGroup polygonTable;
+    std::vector<WallPolygonGroup> GetWallGroups() const;
+};
+@WED_GROUPS@
+static std::vector<WallPolygonGroup> WED(size_t tableSize, uint16_t index, uint16_t count, uint16_t polygon = 0) {
+    DataStream stream;
+    for (size_t i = 0; i < tableSize; ++i) Word(stream.bytes, polygon);
+    Word(stream.bytes, index); Word(stream.bytes, count);
+    WEDImporter importer;
+    importer.str = &stream;
+    importer.VerticesOffset = static_cast<uint32_t>(tableSize * 2);
+    importer.WallGroupsOffset = importer.VerticesOffset;
+    importer.polygonTable.push_back(std::make_shared<WallPolygon>());
+    return importer.GetWallGroups();
+}
+
+using ieVariable = std::string;
+constexpr int CF_CHECK_NAME = 1;
+struct CheckedSpec {
+    std::array<ieByte, 9> values{};
+    ieByte& operator[](size_t index) { return values.at(index); }
+    operator void*() { return values.data(); }
+};
+struct Critter { CheckedSpec Spec; std::string ScriptName; int Flags = 0; };
+static Critter ParseSpec(const std::string& s) {
+    int ps = 0;
+    Critter critter;
+@INI_SPEC@
+    return critter;
+}
+
+static void Run(const std::string& name) {
+    if (name == "plt-valid") {
+        auto stream = PLT(1, 1, {0xff, 7}); PLTImporter importer;
+        Require(importer.Import(&stream) && importer.Width == 1 && importer.Height == 1, "valid PLT rejected");
+    } else if (name == "plt-wrap") {
+        auto stream = PLT(0x80000000u, 2, {}); PLTImporter importer;
+        Require(!importer.Import(&stream), "wrapped PLT accepted");
+    } else if (name == "plt-truncated") {
+        auto stream = PLT(2, 2, {0}); PLTImporter importer;
+        Require(!importer.Import(&stream), "truncated PLT accepted");
+    } else if (name == "plt-palette") {
+        auto stream = PLT(1, 1, {0xff, 8}); PLTImporter importer;
+        Require(!importer.Import(&stream), "out-of-range PLT palette accepted");
+    } else if (name == "plt-zero") {
+        auto stream = PLT(0, 1, {}); PLTImporter importer;
+        Require(!importer.Import(&stream), "zero-size PLT accepted");
+    } else if (name == "plt-preserve") {
+        auto good = PLT(1, 1, {1, 7}); auto bad = PLT(2, 1, {0xff, 8, 0xff, 8}); PLTImporter importer;
+        Require(importer.Import(&good), "valid PLT setup failed"); void* prior = importer.pixels;
+        Require(!importer.Import(&bad) && importer.pixels == prior && importer.Width == 1, "failed PLT import changed retained image");
+    } else if (name == "mve-valid" || name == "mve-wrap" || name == "mve-zero" || name == "mve-truncate") {
+        DataStream stream;
+        uint16_t blocks = name == "mve-wrap" ? 4096 : name == "mve-zero" ? 0 : name == "mve-truncate" ? 8193 : 80;
+        Word(stream.bytes, blocks); Word(stream.bytes, blocks); Word(stream.bytes, 0); Word(stream.bytes, 1);
+        MVEPlayer player; player.str = &stream;
+        auto result = player.InitializeVideo(2);
+        Require(result == (name == "mve-valid" ? MVEPlayer::FrameResult::OK : MVEPlayer::FrameResult::ERROR), "MVE size decision incorrect");
+        if (name != "mve-valid") Require(player.videoBackBuffer.empty(), "invalid MVE allocated pixels");
+    } else if (name == "bam-valid" || name == "bam-frame-limit" || name == "bam-cycle-limit") {
+        uint32_t frames = name == "bam-frame-limit" ? 65534 : 3;
+        uint32_t cycles = name == "bam-cycle-limit" ? 65534 : 1;
+        auto stream = BAM(frames, cycles); BAMImporter importer;
+        Require(importer.Import(&stream) && importer.frames.size() == frames && importer.cycles.size() == cycles, "representable BAM rejected");
+    } else if (name == "bam-frames" || name == "bam-cycles") {
+        auto stream = BAM(name == "bam-frames" ? 65536 : 1, name == "bam-cycles" ? 65536 : 1); BAMImporter importer;
+        Require(!importer.Import(&stream), "unrepresentable BAM count accepted");
+    } else if (name == "mos-many") {
+        auto stream = MOS(65536); MOSImporter importer; importer.str = &stream;
+        Require(importer.Import(&stream), "complete MOS table rejected");
+        Require(bool(importer.GetSprite2Dv2()) && importer.blitCalls == 65536, "MOS block count changed");
+    } else if (name == "mos-truncated") {
+        auto stream = MOS(1, false); MOSImporter importer;
+        Require(!importer.Import(&stream), "truncated MOS block table accepted");
+    } else if (name == "wed-valid" || name == "wed-wide") {
+        auto groups = name == "wed-wide" ? WED(65537, 65535, 2) : WED(3, 1, 2);
+        Require(groups.size() == 1 && groups[0].size() == 2, "valid WED span rejected or counter wrapped");
+    } else if (name == "wed-span") {
+        Require(WED(2, 1, 2).empty(), "WED span outside table accepted");
+    } else if (name == "wed-polygon") {
+        Require(WED(1, 0, 1, 1).empty(), "WED polygon outside table accepted");
+    } else if (name == "spec-empty" || name == "spec-space" || name == "spec-eof" || name == "spec-name") {
+        std::string input = name == "spec-empty" ? "" : name == "spec-space" ? "   " : name == "spec-eof" ? "[" : "named_creature";
+        auto result = ParseSpec(input);
+        Require(result.Flags == CF_CHECK_NAME && result.ScriptName == input, "non-numeric spec fallback failed");
+    } else if (name == "spec-values") {
+        auto result = ParseSpec("[1.2.3.4.5.6.7.8.9]");
+        for (size_t i = 0; i < 9; ++i) Require(result.Spec[i] == i + 1, "numeric spec changed");
+    } else if (name == "spec-partial") {
+        auto result = ParseSpec("[1.2.3]");
+        Require(result.Spec[0] == 1 && result.Spec[2] == 3 && result.Spec[3] == 0, "partial legacy spec changed");
+    } else throw std::runtime_error("unknown fixture");
+}
+int main(int argc, char** argv) {
+    try {
+        if (argc != 2) throw std::runtime_error("one fixture name is required");
+        Run(argv[1]);
+        std::cout << argv[1] << ": PASS\n";
+        return 0;
+    } catch (const std::exception& error) {
+        std::cerr << error.what() << '\n';
+        return 1;
+    }
+}
