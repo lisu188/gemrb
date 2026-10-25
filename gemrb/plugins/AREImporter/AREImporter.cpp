@@ -1442,7 +1442,12 @@ Map* AREImporter::GetMap(const ResRef& resRef, bool day_or_night)
 
 	PluginHolder<TileMapMgr> tmm = MakePluginHolder<TileMapMgr>(IE_WED_CLASS_ID);
 	DataStream* wedfile = gamedata->GetResourceStream(WEDResRef, IE_WED_CLASS_ID);
-	tmm->Open(wedfile);
+	if (!tmm->Open(wedfile)) return nullptr;
+	auto wallGroups = tmm->GetWallGroups();
+	if (wallGroups.empty()) {
+		Log(ERROR, "AREImporter", "No valid wall-group table available.");
+		return nullptr;
+	}
 
 	//there was no tilemap set yet, so lets just send a NULL
 	TileMap* tm = tmm->GetTileMap(nullptr);
@@ -1629,7 +1634,7 @@ Map* AREImporter::GetMap(const ResRef& resRef, bool day_or_night)
 	str->Read(map->ExploredBitmap.data(), mapSize);
 
 	Log(MESSAGE, "AREImporter", "Loading wallgroups");
-	map->SetWallGroups(tmm->GetWallGroups());
+	map->SetWallGroups(std::move(wallGroups));
 	// setting up doors - doing it here instead when reading doors, so actors can be bumped if needed
 	for (ieDword i = 0; i < DoorsCount; i++) {
 		Door* door = tm->GetDoor(i);

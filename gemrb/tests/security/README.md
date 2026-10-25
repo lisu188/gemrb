@@ -14,6 +14,13 @@ python3 gemrb/tests/security/test_parser_bounds.py \
   --case spec-name --case spec-values --output valid-fixtures.json
 ```
 
+`test_wall_group_contract.py` separately compiles the actual early portion of
+`AREImporter::GetMap` with dependency adapters. It checks that an unopened WED
+or empty wall-group result is rejected before requesting a tile map, while a
+valid group table proceeds. The final loader installs the saved table, rather
+than making a second unchecked parse call. This is a loader-prefix contract
+check, not complete area loading or rendering.
+
 The runner can also select its existing bounded rejection/edge cases with
 `--case`. The optional `--baseline` mode reads a Git ref without changing the
 checkout. It is for diagnostic comparison, not a passing acceptance gate.
