@@ -110,6 +110,18 @@ using namespace GemRB;
 @BIF_GET@
 
 int main() {
+    // These are ordinary SDL surfaces. Their int pitch can exceed the engine's
+    // uint16_t field after row alignment, despite a representable tight row.
+    SDL_Surface* aligned = SDL_CreateRGBSurface(0, 21845, 1, 24, 0, 0, 0, 0);
+    if (!aligned || aligned->pitch != 65536) return 5;
+    SDL_FreeSurface(aligned);
+    size_t imageBytes = 0;
+    if (CheckedImageByteCount(21845, 1, 3, imageBytes)) return 6;
+    aligned = SDL_CreateRGBSurface(0, 21844, 1, 24, 0, 0, 0, 0);
+    if (!aligned || aligned->pitch != 65532 ||
+        !CheckedImageByteCount(21844, 1, 3, imageBytes) || imageBytes != 65532) return 7;
+    SDL_FreeSurface(aligned);
+    std::cout << "valid SDL row-alignment representation: PASS\n";
     DataStream tileRecords(24);
     auto page = std::make_shared<ImageMgr>();
     auto sourceSprite = std::make_shared<FixtureSprite>(64, 64, 260);

@@ -17,9 +17,13 @@ decoded byte layout with libpng. The TIS/BIF check also needs SDL2 development
 files and a CMake build directory containing GemRB's generated `config.h`.
 It includes the actual `Sprite2D`, `PixelFormat` and geometry headers, extracts
 the used production constructors/accessors, and creates real SDL surfaces.
-It verifies a valid tile copy from padded source rows and a valid archive tile
-span. SDL reports a 260-byte pitch for the 64-pixel ARGB32 source row with four
-padding bytes. Both checks compile their host harness with AddressSanitizer and
+It verifies a valid tile copy from padded source rows, a valid archive tile
+span, and SDL's row-alignment representation. SDL reports a 260-byte pitch for
+the 64-pixel ARGB32 source row with four padding bytes. An ordinary one-row
+RGB24 surface of width 21845 has pitch 65536 after alignment, exceeding GemRB's
+uint16 pitch representation; width 21844 yields pitch 65532 and fits. The size
+helper reserves three bytes for this alignment, including later sprite copies.
+Both checks compile their host harness with AddressSanitizer and
 UndefinedBehaviorSanitizer. For an isolated source overlay, `--header-root` can
 identify the complete checkout supplying the actual project headers.
 

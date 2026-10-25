@@ -12,13 +12,15 @@
 namespace GemRB {
 
 // Sprite2D stores pitch in uint16_t and image row/area calculations use int.
-// Check those representations before evaluating a product or narrowing a size.
+// SDL may align freshly allocated or copied surface rows to four bytes, so
+// reserve that padding before evaluating a product or narrowing a size.
 constexpr bool CheckedImageByteCount(int64_t width, int64_t height, size_t bytesPerPixel, size_t& bytes) noexcept
 {
 	bytes = 0;
 	const size_t limit = std::numeric_limits<int>::max();
+	const size_t rowLimit = std::numeric_limits<uint16_t>::max() - 3;
 	if (width <= 0 || height <= 0 || !bytesPerPixel || bytesPerPixel > limit ||
-	    uint64_t(width) > std::numeric_limits<uint16_t>::max() / bytesPerPixel ||
+	    uint64_t(width) > rowLimit / bytesPerPixel ||
 	    uint64_t(height) > limit || size_t(width) > limit / bytesPerPixel / size_t(height)) return false;
 	bytes = size_t(width) * size_t(height) * bytesPerPixel;
 	return true;
