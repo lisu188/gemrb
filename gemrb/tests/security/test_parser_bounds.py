@@ -76,7 +76,8 @@ def main():
         "WED_GROUPS": function(wed, "std::vector<WallPolygonGroup> WEDImporter::GetWallGroups("),
         "INI_SPEC": ini[spec_start:spec_end],
     }
-    template = Path(__file__).with_name("parser_bounds_probe.cpp.in").read_text(encoding="utf-8")
+    fixture_template = Path(__file__).with_name("parser_bounds_probe.cpp.in").read_text(encoding="utf-8")
+    template = fixture_template
     for key, text in replacements.items():
         template = template.replace("@" + key + "@", text)
     results = []
@@ -93,6 +94,8 @@ def main():
             results.append({"case": case, "exit_code": result.returncode, "output": (result.stdout + result.stderr)[-5000:]})
             print(f"{case}: {'PASS' if result.returncode == 0 else 'FAIL'}")
     report = {"baseline": args.baseline, "compiler": compiler, "source_sha256": receipts,
+              "fixture_sha256": hashlib.sha256(fixture_template.encode()).hexdigest(),
+              "runner_sha256": hashlib.sha256(Path(__file__).read_text(encoding="utf-8").encode()).hexdigest(),
               "passed": sum(r["exit_code"] == 0 for r in results), "total": len(results), "results": results,
               "limits": "Actual parser functions/statements with bounded dependency adapters; no complete engine, renderer, package or gameplay proof."}
     if args.output:

@@ -11,6 +11,7 @@ For an ordinary valid-fixture smoke check on a host with Python and GCC/Clang:
 ```sh
 python3 gemrb/tests/security/test_parser_bounds.py \
   --case plt-valid --case mve-valid --case bam-valid --case wed-valid \
+  --case bam-frame-limit --case bam-cycle-limit \
   --case spec-name --case spec-values --output valid-fixtures.json
 ```
 
@@ -20,6 +21,9 @@ or empty wall-group result is rejected before requesting a tile map, while a
 valid group table proceeds. The final loader installs the saved table, rather
 than making a second unchecked parse call. This is a loader-prefix contract
 check, not complete area loading or rendering.
+
+The supported BAM frame/cycle boundary cases use 65534. AnimationFactory
+reserves 65535 as its invalid-index sentinel and requires counts below it.
 
 The runner can also select its existing bounded rejection/edge cases with
 `--case`. The optional `--baseline` mode reads a Git ref without changing the

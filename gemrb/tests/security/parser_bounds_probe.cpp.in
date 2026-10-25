@@ -267,8 +267,8 @@ static void Run(const std::string& name) {
         Require(result == (name == "mve-valid" ? MVEPlayer::FrameResult::OK : MVEPlayer::FrameResult::ERROR), "MVE size decision incorrect");
         if (name != "mve-valid") Require(player.videoBackBuffer.empty(), "invalid MVE allocated pixels");
     } else if (name == "bam-valid" || name == "bam-frame-limit" || name == "bam-cycle-limit") {
-        uint32_t frames = name == "bam-frame-limit" ? 65535 : 3;
-        uint32_t cycles = name == "bam-cycle-limit" ? 65535 : 1;
+        uint32_t frames = name == "bam-frame-limit" ? 65534 : 3;
+        uint32_t cycles = name == "bam-cycle-limit" ? 65534 : 1;
         auto stream = BAM(frames, cycles); BAMImporter importer;
         Require(importer.Import(&stream) && importer.frames.size() == frames && importer.cycles.size() == cycles, "representable BAM rejected");
     } else if (name == "bam-frames" || name == "bam-cycles") {
