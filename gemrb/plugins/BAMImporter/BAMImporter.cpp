@@ -15,6 +15,8 @@
 #include "Video/RLE.h"
 #include "Video/Video.h"
 
+#include <limits>
+
 using namespace GemRB;
 
 bool BAMImporter::Import(DataStream* str)
@@ -36,20 +38,27 @@ bool BAMImporter::Import(DataStream* str)
 		return false;
 	}
 
-	ieDword frameCount;
+	ieDword frameCount = 0;
 	if (version == BAMVersion::V1) {
-		str->ReadScalar<ieDword, ieWord>(frameCount);
+		ieWord count = 0;
+		if (str->ReadWord(count) != 2) return false;
+		frameCount = count;
 	} else {
-		str->ReadDword(frameCount);
+		if (str->ReadDword(frameCount) != 4) return false;
 	}
+	// AnimationFactory reserves the maximum index as InvalidIndex.
+	if (frameCount >= std::numeric_limits<index_t>::max()) return false;
 	frames.resize(frameCount);
 
-	ieDword cycleCount;
+	ieDword cycleCount = 0;
 	if (version == BAMVersion::V1) {
-		str->ReadScalar<ieDword, ieByte>(cycleCount);
+		ieByte count = 0;
+		if (str->ReadScalar(count) != 1) return false;
+		cycleCount = count;
 	} else {
-		str->ReadDword(cycleCount);
+		if (str->ReadDword(cycleCount) != 4) return false;
 	}
+	if (cycleCount >= std::numeric_limits<index_t>::max()) return false;
 	cycles.resize(cycleCount);
 
 	ieDword dataBlockCount = 0;
