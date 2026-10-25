@@ -51,9 +51,12 @@ GEM_EXPORT bool intersectSegmentScanline(const Point& a, const Point& b, int y, 
    5 ⋰  ⋮  ⋱4
 	  7  6
  */
+// Plotting returns an empty vector if arithmetic, coordinates or output storage
+// cannot be represented, or allocation fails. Returned point groups are complete.
 GEM_EXPORT std::vector<BasePoint> PlotCircle(const BasePoint& origin, uint16_t r, uint8_t octants = 0xff) noexcept;
 
 // return a vector of Points composing an ellipse bounded by rect
+// A one-pixel square is a zero-radius circle, retaining coincident octant points.
 GEM_EXPORT std::vector<BasePoint> PlotEllipse(const Region& rect) noexcept;
 }
 
