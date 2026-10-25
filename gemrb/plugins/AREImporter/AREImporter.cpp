@@ -156,7 +156,7 @@ static Holder<Sprite2D> LoadImageAs8bit(const ResRef& resref)
 	if (!spr) return nullptr;
 	if (spr->Format().Bpp > 1) {
 		static const PixelFormat fmt = PixelFormat::Paletted8Bit(nullptr, false);
-		spr->ConvertFormatTo(fmt);
+		if (!spr->ConvertFormatTo(fmt)) return nullptr;
 	}
 
 	assert(spr->Format().Bpp == 1); // convert format can fail (but never should here)
