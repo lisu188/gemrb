@@ -82,6 +82,7 @@ class LegacyAssetExtractionTest(unittest.TestCase):
         # The Java wrapper also checks rename while its process is still alive.
         renamed = self.archive.with_suffix(".closed.zip")
         self.archive.rename(renamed)
+        renamed.rename(self.archive)
 
     def test_nested_assets_and_directory_entries(self):
         result = self.extract([
