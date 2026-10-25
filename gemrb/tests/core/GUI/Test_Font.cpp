@@ -4,11 +4,40 @@
 
 #include "../../../core/GUI/TextSystem/Font.h"
 
+#include <array>
 #include <gtest/gtest.h>
 
 namespace GemRB {
 
 namespace {
+
+	class LockedGlyphSprite : public Sprite2D {
+	public:
+		using Sprite2D::LockSprite;
+		bool locked = false;
+		std::array<ieByte, 8> data { 11, 12, 99, 99, 21, 22, 99, 99 };
+
+		explicit LockedGlyphSprite(const Holder<Palette>& pal)
+			: Sprite2D(Region(0, 12, 2, 2), nullptr, PixelFormat::Paletted8Bit(pal), 4) {}
+
+		void* LockSprite() override
+		{
+			locked = true;
+			return data.data();
+		}
+		void UnlockSprite() override
+		{
+			locked = false;
+			data.fill(0); // direct pixel access is valid only while locked
+		}
+	};
+
+	class CanvasFont : public Font {
+	public:
+		CanvasFont()
+			: Font(MakeHolder<Palette>(), 14, 12, false) {}
+		Holder<LockedGlyphSprite> MakeSprite() const { return MakeHolder<LockedGlyphSprite>(palette); }
+	};
 
 	class CachedFont : public Font {
 	public:
@@ -58,6 +87,22 @@ TEST(FontTest, ExplicitWhitespaceAliasesAreCached)
 	font.CreateAliasForChar(' ', 0x3000);
 	EXPECT_EQ(font.FindGlyph(0x3000), &space);
 	EXPECT_EQ(font.StringSize(u"\u3000").w, 3);
+}
+
+
+TEST(FontTest, GlyphAtlasCopiesPaddedRowsBeforeUnlock)
+{
+	CanvasFont font;
+	auto sprite = font.MakeSprite();
+	const Glyph& glyph = font.CreateGlyphForCharSprite('A', sprite);
+
+	EXPECT_FALSE(sprite->locked);
+	EXPECT_EQ(sprite->data[0], 0);
+	ASSERT_NE(glyph.pixels, nullptr);
+	EXPECT_EQ(glyph.pixels[0], 11);
+	EXPECT_EQ(glyph.pixels[1], 12);
+	EXPECT_EQ(glyph.pixels[glyph.pitch], 21);
+	EXPECT_EQ(glyph.pixels[glyph.pitch + 1], 22);
 }
 
 }

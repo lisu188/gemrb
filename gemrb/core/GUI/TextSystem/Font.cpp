@@ -196,9 +196,13 @@ const Glyph& Font::CreateGlyphForCharSprite(ieWord chr, const Holder<Sprite2D>& 
 	// FIXME: should we adjust for spr->Frame.x too?
 	Point pos(0, Baseline - spr->Frame.y);
 
+	const ieByte* pixels = static_cast<const ieByte*>(spr->LockSprite());
+	struct SpriteUnlocker {
+		Sprite2D* sprite;
+		~SpriteUnlocker() { sprite->UnlockSprite(); }
+	} unlocker { spr.get() };
 	const uint8_t bpp = spr->GetPalette() ? 1 : 4;
-	Glyph tmp = Glyph(size, pos, (ieByte*) spr->LockSprite(), spr->GetPitch() / bpp, bpp);
-	spr->UnlockSprite(); // FIXME: this is assuming it is ok to hang onto to pixel buffer returned from LockSprite()
+	Glyph tmp = Glyph(size, pos, pixels, spr->GetPitch() / bpp, bpp);
 	// adjust the location for the glyph
 	if (!CurrentAtlasPage || !CurrentAtlasPage->AddGlyph(chr, tmp)) {
 		// page is full, make a new one
