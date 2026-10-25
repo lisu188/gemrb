@@ -1,0 +1,125 @@
+// SPDX-FileCopyrightText: 2026 Contributors to the GemRB project <https://gemrb.org>
+// SPDX-License-Identifier: GPL-2.0-or-later
+#include "Video/ImageBufferSize.h"
+#include <algorithm>
+#include <cstdlib>
+#include <cstring>
+#include <iostream>
+#include <memory>
+#include <string>
+#include <vector>
+
+using ieDword = uint32_t;
+using strpos_t = size_t;
+using strret_t = std::ptrdiff_t;
+constexpr int GEM_STREAM_START = 1;
+constexpr unsigned long IE_TIS_CLASS_ID = 1;
+template<typename T> using Holder = std::shared_ptr<T>;
+template<typename T> using ResourceHolder = std::shared_ptr<T>;
+using ResRef = std::string;
+namespace fmt { template<typename... T> std::string format(const char*, const T&...) { return {}; } }
+struct Region { int x, y, w, h; };
+struct PixelFormat {
+    int BytesPerPixel = 4;
+    static PixelFormat ARGB32Bit() { return {}; }
+};
+class DataStream {
+    size_t pos = 0;
+public:
+    std::vector<uint8_t> data;
+    std::string filename = "AA0000N.tis";
+    explicit DataStream(size_t size) : data(size) {}
+    size_t Size() const { return data.size(); }
+    void Seek(size_t offset, int) { pos = offset; }
+    strret_t ReadDword(ieDword& output) {
+        if (pos > data.size() || data.size() - pos < 4) return -1;
+        output = 0;
+        for (unsigned i = 0; i < 4; ++i) output |= ieDword(data[pos++]) << (i * 8);
+        return 4;
+    }
+};
+struct Sprite2D {
+    Region Frame;
+    uint16_t pitch;
+    std::vector<uint8_t> pixels;
+    Sprite2D(int width, int height, uint16_t stride) : Frame {0, 0, width, height}, pitch(stride), pixels(size_t(stride) * height, 0xee) {}
+    PixelFormat Format() const { return {}; }
+    uint16_t GetPitch() const { return pitch; }
+    void* LockSprite() { return pixels.data(); }
+    const void* LockSprite() const { return pixels.data(); }
+    void UnlockSprite() const {}
+};
+struct ImageMgr {
+    Holder<Sprite2D> sprite;
+    Holder<Sprite2D> GetSprite2D(Region) { return sprite; }
+};
+struct GameData {
+    template<typename T> ResourceHolder<T> GetResourceHolder(const std::string&, bool) { return {}; }
+};
+GameData gameData;
+GameData* gamedata = &gameData;
+struct Driver {
+    Holder<Sprite2D> CreateSprite(Region region, uint8_t* pixels, PixelFormat) {
+        auto sprite = std::make_shared<Sprite2D>(region.w, region.h, uint16_t(region.w * 4));
+        std::copy(pixels, pixels + sprite->pixels.size(), sprite->pixels.begin());
+        std::free(pixels);
+        return sprite;
+    }
+};
+Driver driver;
+Driver* VideoDriver = &driver;
+struct Point { int x = 0, y = 0; };
+struct TISPVRBlock { ieDword pvrzPage = 0; Point source; };
+struct TISImporter {
+    DataStream* str;
+    ieDword TileSize = 64, headerShift = 0, TilesSectionLen = 12;
+    ResourceHolder<ImageMgr> lastPVRZ;
+    ieDword lastPVRZPage = 0;
+    Holder<Sprite2D> GetTilePVR(int);
+    void Blit(const TISPVRBlock&, uint8_t*);
+};
+struct FileEntry { ieDword resLocator = 0, dataOffset = 0, fileSize = 0; };
+struct TileEntry { ieDword resLocator = 0, dataOffset = 0, tileSize = 0, tilesCount = 0; };
+size_t lastStart = 0, lastLength = 0;
+DataStream* SliceStream(DataStream*, size_t start, size_t length) {
+    lastStart = start;
+    lastLength = length;
+    return new DataStream(length);
+}
+struct BIFImporter {
+    DataStream* stream;
+    std::vector<TileEntry> tentries;
+    std::vector<FileEntry> fentries;
+    unsigned tentcount = 0;
+    ieDword fentcount = 0;
+    DataStream* GetStream(unsigned long, unsigned long);
+};
+using namespace GemRB;
+
+@TIS_GET@
+@TIS_BLIT@
+@BIF_GET@
+
+int main() {
+    DataStream tileRecords(24);
+    auto page = std::make_shared<ImageMgr>();
+    page->sprite = std::make_shared<Sprite2D>(64, 64, 260);
+    for (size_t y = 0; y < 64; ++y)
+        for (size_t x = 0; x < 256; ++x) page->sprite->pixels[y * 260 + x] = uint8_t(x + y);
+    TISImporter tile {&tileRecords};
+    tile.lastPVRZ = page;
+    auto copied = tile.GetTilePVR(1);
+    if (!copied || copied->pixels.size() != 64 * 64 * 4) return 1;
+    for (size_t y = 0; y < 64; ++y)
+        for (size_t x = 0; x < 256; ++x)
+            if (copied->pixels[y * 256 + x] != uint8_t(x + y)) return 2;
+    std::cout << "valid padded-pitch TIS tile: PASS\n";
+    DataStream archive(1024);
+    BIFImporter bif {&archive};
+    bif.tentries.push_back({0, 32, 64, 3});
+    bif.tentcount = 1;
+    std::unique_ptr<DataStream> slice(bif.GetStream(0, IE_TIS_CLASS_ID));
+    if (!slice || lastStart != 32 || lastLength != 192) return 3;
+    std::cout << "valid BIF tile span: PASS\n";
+    return 0;
+}

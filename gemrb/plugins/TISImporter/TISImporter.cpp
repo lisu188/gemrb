@@ -10,6 +10,7 @@
 #include "Sprite2D.h"
 
 #include "Logging/Logging.h"
+#include "Video/ImageBufferSize.h"
 #include "Video/Video.h"
 
 using namespace GemRB;
@@ -86,16 +87,22 @@ Holder<Sprite2D> TISImporter::GetTile(int index)
 
 Holder<Sprite2D> TISImporter::GetTilePVR(int index)
 {
-	size_t imageSize = TileSize * TileSize * 4;
+	size_t imageSize;
+	if (!CheckedImageByteCount(TileSize, TileSize, 4, imageSize) || index < 0 ||
+	    TilesSectionLen < 12 || headerShift > str->Size() || str->Size() - headerShift < 12 ||
+	    strpos_t(index) > (str->Size() - headerShift - 12) / TilesSectionLen) return nullptr;
+	str->Seek(headerShift + strpos_t(index) * TilesSectionLen, GEM_STREAM_START);
+
+	TISPVRBlock dataBlock {};
+	ieDword sourceX = 0, sourceY = 0;
+	if (str->ReadDword(dataBlock.pvrzPage) != 4 || str->ReadDword(sourceX) != 4 ||
+	    str->ReadDword(sourceY) != 4 || sourceX > std::numeric_limits<int>::max() ||
+	    sourceY > std::numeric_limits<int>::max()) return nullptr;
+	dataBlock.source.x = int(sourceX);
+	dataBlock.source.y = int(sourceY);
 	uint8_t* imageData = static_cast<uint8_t*>(malloc(imageSize));
+	if (!imageData) return nullptr;
 	std::fill(imageData, imageData + imageSize, 0);
-
-	str->Seek(headerShift + index * TilesSectionLen, GEM_STREAM_START);
-
-	TISPVRBlock dataBlock;
-	str->ReadDword(dataBlock.pvrzPage);
-	str->ReadScalar<int, ieDword>(dataBlock.source.x);
-	str->ReadScalar<int, ieDword>(dataBlock.source.y);
 	Blit(dataBlock, imageData);
 
 	PixelFormat fmt = PixelFormat::ARGB32Bit();
@@ -123,18 +130,23 @@ void TISImporter::Blit(const TISPVRBlock& dataBlock, uint8_t* frameData)
 
 	if (!lastPVRZ) return;
 	auto sprite = lastPVRZ->GetSprite2D(Region { dataBlock.source.x, dataBlock.source.y, static_cast<int>(TileSize), static_cast<int>(TileSize) });
-	if (!sprite) {
+	if (!sprite || sprite->Format().BytesPerPixel != 4 || sprite->Frame.w < int(TileSize) ||
+	    sprite->Frame.h < int(TileSize) || sprite->GetPitch() < size_t(TileSize) * 4) {
 		return;
 	}
 
 	const uint8_t* spritePixels = static_cast<uint8_t*>(sprite->LockSprite());
+	if (!spritePixels) {
+		sprite->UnlockSprite();
+		return;
+	}
 	for (ieDword h = 0; h < TileSize; ++h) {
-		size_t offset = h * sprite->Frame.w * 4;
-		size_t destOffset = 4 * (TileSize * h);
+		size_t offset = size_t(h) * sprite->GetPitch();
+		size_t destOffset = size_t(4) * TileSize * h;
 
 		std::copy(
 			spritePixels + offset,
-			spritePixels + offset + sprite->Frame.w * 4,
+			spritePixels + offset + size_t(TileSize) * 4,
 			frameData + destOffset);
 	}
 

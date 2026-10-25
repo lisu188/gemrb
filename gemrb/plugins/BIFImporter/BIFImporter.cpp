@@ -140,8 +140,11 @@ DataStream* BIFImporter::GetStream(unsigned long Resource, unsigned long Type)
 		unsigned int srcResLoc = Resource & 0xFC000;
 		for (unsigned int i = 0; i < tentcount; i++) {
 			if ((tentries[i].resLocator & 0xFC000) == srcResLoc) {
+				const auto& entry = tentries[i];
+				if (entry.dataOffset > stream->Size() ||
+				    (entry.tilesCount && entry.tileSize > (stream->Size() - entry.dataOffset) / entry.tilesCount)) return nullptr;
 				return SliceStream(stream, tentries[i].dataOffset,
-						   tentries[i].tileSize * tentries[i].tilesCount);
+						   strpos_t(entry.tileSize) * entry.tilesCount);
 			}
 		}
 	} else {
