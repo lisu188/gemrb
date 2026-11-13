@@ -49,7 +49,7 @@ struct Glyph {
 	const Size size;
 	const Point pos;
 
-	const ieWord pitch;
+	const ieWord pitch; // pixels per source row (Sprite2D pitch is in bytes)
 	const ieByte* pixels;
 	const uint8_t bytesPerPx;
 
@@ -154,12 +154,12 @@ public:
 
 private:
 	void CreateGlyphIndex(ieWord chr, ieWord pageIdx, const Glyph*);
-	// Blit to the sprite or screen if canvas is NULL
+	// Render through atlas sprites to the screen.
 	size_t RenderText(const String&, Region&, ieByte alignment, const PrintColors*,
-			  Point* = NULL, ieByte** canvas = NULL, bool grow = false) const;
+			  Point* = NULL) const;
 	// render a single line of text. called by RenderText()
 	size_t RenderLine(const String& string, const Region& rgn,
-			  Point& dp, const PrintColors*, ieByte** canvas = NULL) const;
+			  Point& dp, const PrintColors*) const;
 
 	size_t Print(Region rgn, const String& string, ieByte Alignment, const PrintColors* colors, Point* point = nullptr) const;
 
