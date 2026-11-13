@@ -103,5 +103,4 @@ TEST(FontTest, GlyphAtlasCopiesPaddedRowsBeforeUnlock)
 	EXPECT_EQ(glyph.pixels[glyph.pitch], 21);
 	EXPECT_EQ(glyph.pixels[glyph.pitch + 1], 22);
 }
-
 }
