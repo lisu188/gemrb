@@ -16,6 +16,7 @@ import tempfile
 
 CASES = [
     "plt-valid", "plt-wrap", "plt-truncated", "plt-palette", "plt-zero", "plt-preserve",
+    "plt-max-row", "plt-row-limit", "plt-tall-valid", "plt-row-preserve",
     "mve-valid", "mve-wrap", "mve-zero", "mve-truncate", "bam-valid", "bam-frame-limit", "bam-cycle-limit",
     "bam-frames", "bam-cycles", "mos-many", "mos-truncated", "wed-valid", "wed-wide",
     "wed-span", "wed-polygon", "spec-empty", "spec-space", "spec-eof", "spec-name",

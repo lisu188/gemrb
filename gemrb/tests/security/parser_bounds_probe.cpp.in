@@ -271,6 +271,20 @@ static void Run(const std::string& name) {
         auto good = PLT(1, 1, {1, 7}); auto bad = PLT(2, 1, {0xff, 8, 0xff, 8}); PLTImporter importer;
         Require(importer.Import(&good), "valid PLT setup failed"); void* prior = importer.pixels;
         Require(!importer.Import(&bad) && importer.pixels == prior && importer.Width == 1, "failed PLT import changed retained image");
+    } else if (name == "plt-max-row" || name == "plt-row-limit" || name == "plt-tall-valid") {
+        const uint32_t width = name == "plt-max-row" ? 16383 : name == "plt-row-limit" ? 16384 : 1;
+        const uint32_t height = name == "plt-tall-valid" ? 16384 : 1;
+        auto stream = PLT(width, height, std::vector<uint8_t>(size_t(width) * height * 2, 0));
+        PLTImporter importer;
+        Require(importer.Import(&stream) == (name != "plt-row-limit"), "PLT dimensions disagree with RGBA row capacity");
+    } else if (name == "plt-row-preserve") {
+        auto good = PLT(1, 1, {1, 7});
+        auto tooWide = PLT(16384, 1, std::vector<uint8_t>(size_t(16384) * 2, 0));
+        PLTImporter importer;
+        Require(importer.Import(&good), "valid PLT setup failed");
+        void* prior = importer.pixels;
+        Require(!importer.Import(&tooWide) && importer.pixels == prior && importer.Width == 1 && importer.Height == 1,
+                "unsupported RGBA row replaced the retained PLT image");
     } else if (name == "mve-valid" || name == "mve-wrap" || name == "mve-zero" || name == "mve-truncate") {
         DataStream stream;
         uint16_t blocks = name == "mve-wrap" ? 4096 : name == "mve-zero" ? 0 : name == "mve-truncate" ? 8193 : 80;

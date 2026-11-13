@@ -8,9 +8,8 @@
 
 #include "Interface.h"
 
+#include "Video/ImageBufferSize.h"
 #include "Video/Video.h"
-
-#include <limits>
 
 using namespace GemRB;
 
@@ -32,10 +31,10 @@ bool PLTImporter::Import(DataStream* str)
 	ieDword width = 0;
 	ieDword height = 0;
 	if (str->Read(unknown, 8) != 8 || str->ReadDword(width) != 4 || str->ReadDword(height) != 4) return false;
-	// Sprite dimensions and row offsets are signed ints. Bound the RGBA
-	// result before computing either the packed input or output byte count.
-	if (!width || !height || width > std::numeric_limits<int>::max() / 4u / height) return false;
-	const size_t inputSize = size_t(width) * height * 2;
+	// Palette expansion must fit the shared RGBA row and image limits.
+	size_t outputSize = 0;
+	if (!CheckedImageByteCount(width, height, 4, outputSize)) return false;
+	const size_t inputSize = outputSize / 2;
 	if (inputSize > str->Remains()) return false;
 	auto* imported = static_cast<unsigned char*>(malloc(inputSize));
 	if (!imported) return false;
