@@ -89,7 +89,6 @@ TEST(FontTest, ExplicitWhitespaceAliasesAreCached)
 	EXPECT_EQ(font.StringSize(u"\u3000").w, 3);
 }
 
-
 TEST(FontTest, GlyphAtlasCopiesPaddedRowsBeforeUnlock)
 {
 	CanvasFont font;

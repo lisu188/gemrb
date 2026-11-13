@@ -282,7 +282,7 @@ std::shared_ptr<AnimationFactory> BAMImporter::GetAnimationFactory(const ResRef&
 		}
 	} else {
 		FLT.resize(frames.size());
-		for (index_t i = 0; i < frames.size(); ++i) FLT[i] = i;
+		for (size_t i = 0; i < frames.size(); ++i) FLT[i] = static_cast<index_t>(i);
 		for (const auto& frame : frames) {
 			auto sprite = GetV2Frame(frame);
 			if (!sprite) return nullptr;
