@@ -6,7 +6,10 @@
 
 #include "RGBAColor.h"
 
+#include "Video/ImageBufferSize.h"
 #include "Video/Video.h"
+
+#include <new>
 
 // CHECKME: how should we include png.h ? (And how should we check for it?)
 #include <png.h>
@@ -18,7 +21,8 @@ static void DataStream_png_read_data(png_structp png_ptr,
 {
 	void* read_io_ptr = png_get_io_ptr(png_ptr);
 	DataStream* str = static_cast<DataStream*>(read_io_ptr);
-	str->Read(data, length);
+	if (length > size_t(std::numeric_limits<strret_t>::max()) ||
+	    str->Read(data, length) != static_cast<strret_t>(length)) png_error(png_ptr, "Incomplete PNG input");
 }
 
 struct GemRB::PNGInternal {
@@ -97,9 +101,10 @@ bool PNGImporter::Import(DataStream* stream)
 	png_get_IHDR(inf->png_ptr, inf->info_ptr, &width, &height,
 		     &bit_depth, &color_type,
 		     &interlace_type, &compression_type, &filter_method);
+	hasPalette = (color_type == PNG_COLOR_TYPE_PALETTE);
+	const bool hasTransparency = png_get_valid(inf->png_ptr, inf->info_ptr, PNG_INFO_tRNS);
 
-	if (color_type != PNG_COLOR_TYPE_PALETTE &&
-	    png_get_valid(inf->png_ptr, inf->info_ptr, PNG_INFO_tRNS)) {
+	if (!hasPalette && hasTransparency) {
 		// if not indexed, turn transparency info into alpha
 		// (if indexed, we use it directly for colorkeying)
 		png_set_tRNS_to_alpha(inf->png_ptr);
@@ -108,25 +113,45 @@ bool PNGImporter::Import(DataStream* stream)
 	if (bit_depth == 16)
 		png_set_strip_16(inf->png_ptr);
 
-	if (color_type == PNG_COLOR_TYPE_RGB)
+	if (hasPalette && bit_depth < 8) png_set_packing(inf->png_ptr);
+	if (color_type == PNG_COLOR_TYPE_GRAY || color_type == PNG_COLOR_TYPE_GRAY_ALPHA) {
+		if (bit_depth < 8) png_set_expand_gray_1_2_4_to_8(inf->png_ptr);
+		png_set_gray_to_rgb(inf->png_ptr);
+	}
+	if (!hasPalette && !(color_type & PNG_COLOR_MASK_ALPHA) && !hasTransparency)
 		png_set_filler(inf->png_ptr, 0xFF, PNG_FILLER_AFTER);
 
 	png_read_update_info(inf->png_ptr, inf->info_ptr);
 
-	size = Size(width, height);
-
-	hasPalette = (color_type == PNG_COLOR_TYPE_PALETTE);
+	size_t bytes;
+	const size_t bytesPerPixel = hasPalette ? 1 : 4;
+	if (!CheckedImageByteCount(width, height, bytesPerPixel, bytes) ||
+	    png_get_rowbytes(inf->png_ptr, inf->info_ptr) != size_t(width) * bytesPerPixel) {
+		Close();
+		return false;
+	}
+	size = Size(int(width), int(height));
 
 	return true;
 }
 
 Holder<Sprite2D> PNGImporter::GetSprite2D()
 {
+	if (!inf || !inf->png_ptr || !inf->info_ptr) return nullptr;
 	unsigned char* buffer = 0;
-	png_bytep* row_pointers = new png_bytep[size.h];
-	buffer = (unsigned char*) malloc((hasPalette ? 1 : 4) * size.Area());
+	size_t bytes;
+	const size_t bytesPerPixel = hasPalette ? 1 : 4;
+	if (!CheckedImageByteCount(size.w, size.h, bytesPerPixel, bytes) ||
+	    size_t(size.h) > std::numeric_limits<size_t>::max() / sizeof(png_bytep)) return nullptr;
+	png_bytep* row_pointers = new (std::nothrow) png_bytep[size.h];
+	if (!row_pointers) return nullptr;
+	buffer = (unsigned char*) malloc(bytes);
+	if (!buffer) {
+		delete[] row_pointers;
+		return nullptr;
+	}
 	for (int i = 0; i < size.h; ++i)
-		row_pointers[i] = static_cast<png_bytep>(&buffer[(hasPalette ? 1 : 4) * i * size.w]);
+		row_pointers[i] = buffer + bytesPerPixel * size_t(i) * size.w;
 
 	if (setjmp(png_jmpbuf(inf->png_ptr))) {
 		delete[] row_pointers;
