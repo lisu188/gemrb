@@ -65,10 +65,10 @@ private:
 	ResourceHolder<ImageMgr> lastPVRZ;
 	ieDword lastPVRZPage = 0;
 
-	void Blit(const FrameEntry& frame, const BAMV2DataBlock& dataBlock, uint8_t* data);
-	std::vector<index_t> CacheFLT();
+	bool Blit(const FrameEntry& frame, const BAMV2DataBlock& dataBlock, uint8_t* data);
+	bool CacheFLT(std::vector<index_t>& FLT);
 	Holder<Sprite2D> GetV2Frame(const FrameEntry& frame);
-	Holder<Sprite2D> GetFrameInternal(const FrameEntry& frame, bool RLESprite, uint8_t* data) const;
+	Holder<Sprite2D> GetFrameInternal(const FrameEntry& frame, bool RLESprite, const uint8_t* data, size_t dataSize) const;
 };
 
 }

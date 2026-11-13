@@ -8,7 +8,7 @@ namespace GemRB {
 
 void Factory::AddFactoryObject(object_t fobject)
 {
-	fobjects.push_back(std::move(fobject));
+	if (fobject) fobjects.push_back(std::move(fobject));
 }
 
 int Factory::IsLoaded(const ResRef& resref, SClass_ID type) const

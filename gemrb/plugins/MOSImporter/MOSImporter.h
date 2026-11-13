@@ -42,7 +42,7 @@ private:
 	ResourceHolder<ImageMgr> lastPVRZ;
 	ieDword lastPVRZPage = 0;
 
-	void Blit(const MOSV2DataBlock& dataBlock, uint8_t* data);
+	bool Blit(const MOSV2DataBlock& dataBlock, uint8_t* data);
 	Holder<Sprite2D> GetSprite2Dv1();
 	Holder<Sprite2D> GetSprite2Dv2();
 

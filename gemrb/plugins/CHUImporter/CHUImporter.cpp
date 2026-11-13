@@ -142,11 +142,11 @@ static void GetProgressbar(DataStream* str, Control*& ctrl, const Region& ctrlFr
 	Holder<Sprite2D> img3;
 	if (!mosFile.IsEmpty()) {
 		ResourceHolder<ImageMgr> mos = gamedata->GetResourceHolder<ImageMgr>(mosFile);
-		img = mos->GetSprite2D();
+		if (mos) img = mos->GetSprite2D();
 	}
 	if (!mosFile2.IsEmpty()) {
 		ResourceHolder<ImageMgr> mos = gamedata->GetResourceHolder<ImageMgr>(mosFile2);
-		img2 = mos->GetSprite2D();
+		if (mos) img2 = mos->GetSprite2D();
 	}
 
 	if (knobStepsCount) {
@@ -158,7 +158,13 @@ static void GetProgressbar(DataStream* str, Control*& ctrl, const Region& ctrlFr
 		}
 	} else {
 		ResourceHolder<ImageMgr> mos = gamedata->GetResourceHolder<ImageMgr>(bamFile);
-		img3 = mos->GetSprite2D();
+		if (mos) img3 = mos->GetSprite2D();
+	}
+	if (!knobStepsCount && (!img2 || !img3)) {
+		Log(ERROR, "CHUImporter", "Cannot load linear progressbar images.");
+		delete pbar;
+		ctrl = nullptr;
+		return;
 	}
 	pbar->SetBackground(std::move(img));
 	pbar->SetImages(std::move(img2), std::move(img3));
@@ -188,17 +194,18 @@ static void GetSlider(DataStream* str, Control*& ctrl, const Region& ctrlFrame)
 	Slider* sldr = new Slider(ctrlFrame, knobPos, knobStep, knobStepsCount);
 	ctrl = sldr;
 	ResourceHolder<ImageMgr> mos = gamedata->GetResourceHolder<ImageMgr>(mosFile);
-	Holder<Sprite2D> img = mos->GetSprite2D();
+	Holder<Sprite2D> img = mos ? mos->GetSprite2D() : nullptr;
 	sldr->SetImage(IE_GUI_SLIDER_BACKGROUND, img);
 
 	auto bam = gamedata->GetFactoryResourceAs<const AnimationFactory>(bamFile, IE_BAM_CLASS_ID);
-	if (bam) {
-		img = bam->GetFrame(knob, 0);
-		sldr->SetImage(IE_GUI_SLIDER_KNOB, img);
-		img = bam->GetFrame(grabbedKnob, 0);
-		sldr->SetImage(IE_GUI_SLIDER_GRABBEDKNOB, img);
+	auto knobImage = bam ? bam->GetFrame(knob, 0) : nullptr;
+	auto grabbedImage = bam ? bam->GetFrame(grabbedKnob, 0) : nullptr;
+	if (knobImage && grabbedImage) {
+		sldr->SetImage(IE_GUI_SLIDER_KNOB, knobImage);
+		sldr->SetImage(IE_GUI_SLIDER_GRABBEDKNOB, grabbedImage);
 	} else {
 		sldr->SetState(IE_GUI_SLIDER_BACKGROUND);
+		sldr->SetDisabled(true);
 	}
 }
 

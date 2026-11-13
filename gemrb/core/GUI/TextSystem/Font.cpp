@@ -11,7 +11,10 @@
 #include "Strings/StringConversion.h"
 #include "Video/Video.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <cwctype>
+#include <limits>
 #include <utility>
 
 
@@ -20,39 +23,33 @@ namespace GemRB {
 static void BlitGlyphToCanvas(const Glyph& glyph, const Point& p,
 			      ieByte* canvas, const Size& size)
 {
-	const ieByte* src = glyph.pixels;
-	if (canvas == NULL || src == NULL) {
-		return; // need both a src and dst
-	}
+	if (!canvas || !glyph.pixels || size.IsInvalid() || glyph.size.IsInvalid() ||
+	    !glyph.bytesPerPx || glyph.pitch < glyph.size.w) return;
 
-	// find the origin and clip to it.
-	// only worry about origin < 0.
-	Point blitPoint = p + glyph.pos;
-	Size srcSize = glyph.size;
-	if (blitPoint.y < 0) {
-		int offset = -blitPoint.y * glyph.size.w;
-		src += offset * glyph.bytesPerPx;
-		srcSize.h -= offset;
-		blitPoint.y = 0;
-	}
-	if (blitPoint.x < 0) {
-		int offset = -blitPoint.x;
-		src += offset * glyph.bytesPerPx;
-		srcSize.w -= offset;
-		blitPoint.x = 0;
-	}
-	ieByte* dest = canvas + ((size.w * blitPoint.y) + blitPoint.x) * glyph.bytesPerPx;
-	assert(src >= glyph.pixels);
-	assert(dest >= canvas);
-	// copy the glyph to the canvas
-	for (int row = 0; row < srcSize.h; row++) {
-		if (dest + srcSize.w * glyph.bytesPerPx > canvas + (size.w * size.h * glyph.bytesPerPx)) {
-			break;
-		}
+	// Glyph pitch is in pixels; Sprite2D pitch is converted from bytes by
+	// CreateGlyphForCharSprite. Bound spans before forming any pointers.
+	const size_t bpp = glyph.bytesPerPx;
+	const size_t limit = size_t(std::numeric_limits<std::ptrdiff_t>::max());
+	if (size_t(size.w) > limit / bpp || size_t(glyph.pitch) > limit / bpp) return;
+	const size_t dstPitch = size_t(size.w) * bpp;
+	const size_t srcPitch = size_t(glyph.pitch) * bpp;
+	if (size_t(size.h) > limit / dstPitch || size_t(glyph.size.h) > limit / srcPitch) return;
 
-		memcpy(dest, src, size_t(srcSize.w) * glyph.bytesPerPx);
-		dest += size.w * glyph.bytesPerPx;
-		src += glyph.pitch * glyph.bytesPerPx;
+	const int64_t x = int64_t(p.x) + glyph.pos.x;
+	const int64_t y = int64_t(p.y) + glyph.pos.y;
+	const int64_t left = std::max<int64_t>(0, x);
+	const int64_t top = std::max<int64_t>(0, y);
+	const int64_t right = std::min<int64_t>(size.w, x + glyph.size.w);
+	const int64_t bottom = std::min<int64_t>(size.h, y + glyph.size.h);
+	if (left >= right || top >= bottom) return;
+
+	const size_t srcX = size_t(left - x);
+	const size_t srcY = size_t(top - y);
+	const size_t width = size_t(right - left) * bpp;
+	for (size_t row = 0; row < size_t(bottom - top); ++row) {
+		const size_t srcOffset = (srcY + row) * srcPitch + srcX * bpp;
+		const size_t dstOffset = (size_t(top) + row) * dstPitch + size_t(left) * bpp;
+		memcpy(canvas + dstOffset, glyph.pixels + srcOffset, width);
 	}
 }
 
@@ -199,8 +196,13 @@ const Glyph& Font::CreateGlyphForCharSprite(ieWord chr, const Holder<Sprite2D>& 
 	// FIXME: should we adjust for spr->Frame.x too?
 	Point pos(0, Baseline - spr->Frame.y);
 
-	Glyph tmp = Glyph(size, pos, (ieByte*) spr->LockSprite(), spr->Frame.w, spr->GetPalette() ? 1 : 4);
-	spr->UnlockSprite(); // FIXME: this is assuming it is ok to hang onto to pixel buffer returned from LockSprite()
+	const ieByte* pixels = static_cast<const ieByte*>(spr->LockSprite());
+	struct SpriteUnlocker {
+		Sprite2D* sprite;
+		~SpriteUnlocker() { sprite->UnlockSprite(); }
+	} unlocker { spr.get() };
+	const uint8_t bpp = spr->GetPalette() ? 1 : 4;
+	Glyph tmp = Glyph(size, pos, pixels, spr->GetPitch() / bpp, bpp);
 	// adjust the location for the glyph
 	if (!CurrentAtlasPage || !CurrentAtlasPage->AddGlyph(chr, tmp)) {
 		// page is full, make a new one
@@ -243,7 +245,7 @@ const Glyph& Font::GetGlyph(ieWord chr) const
 }
 
 size_t Font::RenderText(const String& string, Region& rgn, ieByte alignment, const PrintColors* colors,
-			Point* point, ieByte** canvas, bool grow) const
+			Point* point) const
 {
 	// NOTE: vertical alignment is not handled here.
 	// it should have been calculated previously and passed in via the "point" parameter
@@ -268,31 +270,6 @@ size_t Font::RenderText(const String& string, Region& rgn, ieByte alignment, con
 			}
 			line = string.substr(stringPos, eolpos - stringPos);
 			stringPos = eolpos;
-		}
-
-		// check if we need to extend the canvas
-		if (canvas && grow && rgn.h < dp.y) {
-			size_t pos = (stringPos < string.length()) ? stringPos : string.length() - 1;
-			pos -= line.length();
-			Size textSize = StringSize(string.substr(pos));
-			ieWord numNewPixels = textSize.Area();
-			ieWord lineArea = rgn.w * LineHeight;
-			// round up
-			ieWord numLines = 1 + ((numNewPixels - 1) / lineArea);
-			// extend the region and canvas both
-			size_t curpos = rgn.h * rgn.w;
-			int vGrow = (numLines * LineHeight);
-			rgn.h += vGrow;
-
-			if (InDebugMode(DebugMode::FONTS)) {
-				Log(MESSAGE, "Font", "Resizing canvas from {}x{} to {}x{}",
-				    rgn.w, rgn.h - vGrow, rgn.w, rgn.h);
-			}
-
-			*canvas = (ieByte*) realloc(*canvas, rgn.w * rgn.h);
-			assert(canvas);
-			// fill the buffer with the color key, or the new area or we will get garbage in the areas we dont blit to
-			memset(*canvas + curpos, 0, vGrow * rgn.w);
 		}
 
 		dp.x = 0;
@@ -346,7 +323,7 @@ size_t Font::RenderText(const String& string, Region& rgn, ieByte alignment, con
 								     Size(lineSize.w, LineHeight)),
 							      ColorWhite, false);
 				}
-				linePos = RenderLine(line, lineRgn, linePoint, colors, canvas);
+				linePos = RenderLine(line, lineRgn, linePoint, colors);
 			}
 			if (linePos == 0) {
 				break; // if linePos == 0 then we would loop till we are out of bounds so just stop here
@@ -375,17 +352,6 @@ size_t Font::RenderText(const String& string, Region& rgn, ieByte alignment, con
 		}
 	}
 
-	// free the unused canvas area (if any)
-	if (canvas) {
-		int usedh = dp.y;
-		if (usedh < rgn.h) {
-			// this is more than just saving memory
-			// vertical alignment will be off if we have extra space
-			*canvas = (ieByte*) realloc(*canvas, rgn.w * usedh);
-			rgn.h = usedh;
-		}
-	}
-
 	if (point) {
 		// deal with possible trailing newline
 		if (charCount > 0 && string[charCount - 1] == u'\n') {
@@ -399,7 +365,7 @@ size_t Font::RenderText(const String& string, Region& rgn, ieByte alignment, con
 }
 
 size_t Font::RenderLine(const String& line, const Region& lineRgn,
-			Point& dp, const PrintColors* colors, ieByte** canvas) const
+			Point& dp, const PrintColors* colors) const
 {
 	assert(lineRgn.h == LineHeight);
 
@@ -469,14 +435,10 @@ size_t Font::RenderLine(const String& line, const Region& lineRgn,
 				break;
 			}
 
-			if (canvas) {
-				BlitGlyphToCanvas(curGlyph, blitPoint, *canvas, lineRgn.size);
-			} else {
-				size_t pageIdx = AtlasIndex[currChar].pageIdx;
-				if (pageIdx < Atlas.size()) {
-					Holder<GlyphAtlasPage> page = Atlas[pageIdx];
-					page->Draw(currChar, Region(blitPoint, curGlyph.size), colors);
-				}
+			size_t pageIdx = AtlasIndex[currChar].pageIdx;
+			if (pageIdx < Atlas.size()) {
+				Holder<GlyphAtlasPage> page = Atlas[pageIdx];
+				page->Draw(currChar, Region(blitPoint, curGlyph.size), colors);
 			}
 			dp.x += curGlyph.size.w;
 		}

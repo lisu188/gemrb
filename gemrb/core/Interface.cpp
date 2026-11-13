@@ -535,9 +535,11 @@ Interface::Interface(CoreSettings&& cfg)
 	}
 
 	Log(MESSAGE, "Core", "Loading palettes...");
-	LoadPalette<16>(Palette16, palettes16);
-	LoadPalette<32>(Palette32, palettes32);
-	LoadPalette<256>(Palette256, palettes256);
+	if (!LoadPalette<16>(Palette16, palettes16) ||
+	    !LoadPalette<32>(Palette32, palettes32) ||
+	    !LoadPalette<256>(Palette256, palettes256)) {
+		ThrowException("Cannot load palettes.");
+	}
 	Log(MESSAGE, "Core", "Palettes loaded.");
 
 	Log(MESSAGE, "Core", "Initializing stock sounds...");
@@ -1202,7 +1204,9 @@ void Interface::LoadSprites()
 		CursorCount = anim->GetCycleCount();
 		Cursors.reserve(CursorCount);
 		for (size_t i = 0; i < CursorCount; i++) {
-			Cursors.push_back(anim->GetFrame(0, (ieByte) i));
+			auto cursor = anim->GetFrame(0, (ieByte) i);
+			if (!cursor) ThrowException(fmt::format("Failed to load cursor frame {}.", i));
+			Cursors.push_back(std::move(cursor));
 		}
 	} else {
 		// support non-BAM cursors
@@ -1213,7 +1217,9 @@ void Interface::LoadSprites()
 			fileName = fmt::format("{}{:02}", MainCursorsImage, CursorCount);
 			ResourceHolder<ImageMgr> im = gamedata->GetResourceHolder<ImageMgr>(fileName, true);
 			if (!im) break;
-			Cursors.push_back(im->GetSprite2D());
+			auto cursor = im->GetSprite2D();
+			if (!cursor) break;
+			Cursors.push_back(std::move(cursor));
 			CursorCount++;
 		}
 	}
@@ -1237,9 +1243,10 @@ void Interface::LoadSprites()
 
 			for (int i = 0; i < 6; i++) {
 				Holder<Sprite2D> sprite = anim->GetFrame(0, (ieByte) i);
-				if (GroundCircleScale[size]) {
+				if (sprite && GroundCircleScale[size]) {
 					sprite = VideoDriver->SpriteScaleDown(sprite, GroundCircleScale[size]);
 				}
+				if (!sprite) ThrowException("Failed Loading Ground circle bitmaps...");
 				GroundCircles[size][i] = std::move(sprite);
 			}
 		}
@@ -4280,7 +4287,7 @@ void Interface::ApplyTooltipDelay() const
 					      tooltipDelay * 21;
 	} else {
 		delay = tooltipDelay >= 100 ? std::numeric_limits<int>::max() :
-					     tooltipDelay * 25;
+					      tooltipDelay * 25;
 	}
 
 	WindowManager::SetTooltipDelay(delay);

@@ -3611,7 +3611,9 @@ static PyObject* GemRB_Button_SetAnimation(PyObject* self, PyObject* args)
 		std::vector<Holder<Sprite2D>> frames;
 		for (Py_ssize_t i = 0; i < PyList_Size(pyAnim); ++i) {
 			PyObject* item = PyList_GetItem(pyAnim, i);
-			frames.push_back(SpriteFromPy(item));
+			auto sprite = SpriteFromPy(item);
+			ABORT_IF_NULL(sprite);
+			frames.push_back(std::move(sprite));
 		}
 
 		fps = frames.size() / (cycle / 1000.0f);

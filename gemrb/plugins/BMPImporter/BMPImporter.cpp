@@ -6,12 +6,13 @@
 
 #include "RGBAColor.h"
 
-#include "Logging/Logging.h"
+#include "Video/ImageBufferSize.h"
 #include "Video/Video.h"
 
-using namespace GemRB;
+#include <limits>
+#include <memory>
 
-#define BMP_HEADER_SIZE 54
+using namespace GemRB;
 
 BMPImporter::~BMPImporter(void)
 {
@@ -21,200 +22,111 @@ BMPImporter::~BMPImporter(void)
 
 bool BMPImporter::Import(DataStream* str)
 {
-	//we release the previous pixel data
 	free(pixels);
-	pixels = NULL;
+	pixels = nullptr;
 	free(PaletteColors);
 	PaletteColors = nullptr;
+	NumColors = 0;
+	BitCount = 0;
 
-	//BITMAPFILEHEADER
-	char Signature[2];
-	ieDword FileSize, DataOffset;
+	char signature[2] {};
+	ieDword fileSize = 0, reserved = 0, dataOffset = 0;
+	if (str->Read(signature, 2) != 2 || strncmp(signature, "BM", 2) != 0 ||
+	    str->ReadDword(fileSize) != 4 || str->ReadDword(reserved) != 4 ||
+	    str->ReadDword(dataOffset) != 4 || str->ReadDword(Size) != 4) return false;
 
-	str->Read(Signature, 2);
-	if (strncmp(Signature, "BM", 2) != 0) {
-		Log(ERROR, "BMPImporter", "Not a valid BMP File.");
-		return false;
-	}
-	str->ReadDword(FileSize);
-	str->Seek(4, GEM_CURRENT_POS);
-	str->ReadDword(DataOffset);
+	// The supported Windows/OS2 headers share this 40-byte prefix.
+	if (Size < 40 || str->Size() < 14 || Size > str->Size() - 14 ||
+	    dataOffset < 14 + size_t(Size) || dataOffset > str->Size()) return false;
+	ieDword width = 0, height = 0, unused = 0, colorsUsed = 0;
+	if (str->ReadDword(width) != 4 || str->ReadDword(height) != 4 ||
+	    str->ReadWord(Planes) != 2 || str->ReadWord(BitCount) != 2 ||
+	    str->ReadDword(Compression) != 4 || str->ReadDword(ImageSize) != 4 ||
+	    str->ReadDword(unused) != 4 || str->ReadDword(unused) != 4 ||
+	    str->ReadDword(colorsUsed) != 4 || str->ReadDword(unused) != 4) return false;
 
-	//BITMAPINFOHEADER
-
-	str->ReadDword(Size);
-	//some IE palettes are of a different format (OS/2 BMP)!
-	if (Size < 24) {
-		Log(ERROR, "BMPImporter", "OS/2 Bitmap, not supported.");
-		return false;
-	}
-
-	bool isV3or5 = (Size == 56) || (Size == 124);
+	const bool isV3or5 = Size == 56 || Size == 124;
 	hasAlpha = isV3or5;
+	if (Planes != 1 || (BitCount != 4 && BitCount != 8 && BitCount != 24 && BitCount != 32) ||
+	    (Compression != 0 && !(Compression == 3 && isV3or5 && BitCount == 32))) return false;
 
-	ieDword tmp;
-	str->ReadDword(tmp);
-	size.w = tmp;
-	str->ReadDword(tmp);
-	size.h = tmp;
-	str->ReadWord(Planes);
-	str->ReadWord(BitCount);
-	str->ReadDword(Compression);
-	str->ReadDword(ImageSize);
+	// BMP height is signed; a negative value stores rows from top to bottom.
+	const int64_t signedHeight = height <= uint32_t(INT32_MAX) ? int64_t(height) : int64_t(height) - (int64_t(1) << 32);
+	const bool topDown = signedHeight < 0;
+	const int64_t imageHeight = topDown ? -signedHeight : signedHeight;
+	size_t outputBytes = 0;
+	const size_t outputBpp = BitCount <= 8 ? 1 : 4;
+	if (!CheckedImageByteCount(width, imageHeight, outputBpp, outputBytes)) return false;
+	size.w = width;
+	size.h = imageHeight;
 
-	if (Compression != 0 && !(Compression == 3 && isV3or5)) {
-		Log(ERROR, "BMPImporter", "Compressed {}-bits Image, not supported.", BitCount);
-		return false;
-	}
-
-	//COLORTABLE
 	if (BitCount <= 8) {
-		str->Seek(Size - 24, GEM_CURRENT_POS);
-		if (BitCount == 8)
-			NumColors = 256;
-		else
-			NumColors = 16;
-		PaletteColors = (Color*) malloc(4 * NumColors);
-
-		for (unsigned int i = 0; i < NumColors; i++) {
-			str->Read(&PaletteColors[i].b, 1);
-			str->Read(&PaletteColors[i].g, 1);
-			str->Read(&PaletteColors[i].r, 1);
-			str->Read(&PaletteColors[i].a, 1);
-			PaletteColors[i].a = (PaletteColors[i].a == 0) ? 0xff : PaletteColors[i].a;
+		const ieDword paletteLimit = ieDword(1) << BitCount;
+		NumColors = colorsUsed ? colorsUsed : paletteLimit;
+		const size_t paletteOffset = 14 + size_t(Size);
+		if (NumColors > paletteLimit || NumColors > (dataOffset - paletteOffset) / 4) return false;
+		PaletteColors = static_cast<Color*>(malloc(NumColors * sizeof(Color)));
+		if (!PaletteColors || str->Seek(paletteOffset, GEM_STREAM_START) < 0) return false;
+		for (ieDword i = 0; i < NumColors; ++i) {
+			uint8_t color[4] {};
+			if (str->Read(color, 4) != 4) return false;
+			PaletteColors[i] = Color { color[2], color[1], color[0], color[3] ? color[3] : uint8_t(255) };
 		}
 	}
 
-	uint32_t rMask = 0xFF;
-	uint32_t gMask = 0xFF << 8;
-	uint32_t bMask = 0xFF << 16;
-	uint32_t aMask = 0xFF << 24;
-
+	uint32_t rMask = 0xff, gMask = 0xff00, bMask = 0xff0000, aMask = 0xff000000;
 	if (isV3or5 && Compression == 3) {
-		str->Seek(16, GEM_CURRENT_POS);
-		str->ReadDword(rMask);
-		str->ReadDword(gMask);
-		str->ReadDword(bMask);
-		str->ReadDword(aMask);
+		if (str->Seek(54, GEM_STREAM_START) < 0 || str->ReadDword(rMask) != 4 ||
+		    str->ReadDword(gMask) != 4 || str->ReadDword(bMask) != 4 || str->ReadDword(aMask) != 4) return false;
 	}
-
 	auto normshift = [](uint32_t mask) {
-		if (mask == 0xFFu << 24) {
-			return 24;
-		} else if (mask == 0xFF << 16) {
-			return 16;
-		} else if (mask == 0xFF << 8) {
-			return 8;
-		} else {
-			return 0;
-		}
+		if (mask == 0xff000000) return 24;
+		if (mask == 0xff0000) return 16;
+		if (mask == 0xff00) return 8;
+		return 0;
 	};
 
-	uint32_t rNormShift = normshift(rMask);
-	uint32_t gNormShift = normshift(gMask);
-	uint32_t bNormShift = normshift(bMask);
-	uint32_t aNormShift = normshift(aMask);
+	// Round bits to a four-byte scanline, including the final odd 4-bit pixel.
+	const size_t rowBytes = ((size_t(size.w) * BitCount + 31) / 32) * 4;
+	if (size_t(size.h) > (str->Size() - dataOffset) / rowBytes) return false;
+	const size_t sourceBytes = rowBytes * size_t(size.h);
+	if (sourceBytes > size_t(std::numeric_limits<strret_t>::max())) return false;
+	std::unique_ptr<uint8_t, decltype(&free)> source(static_cast<uint8_t*>(malloc(sourceBytes)), free);
+	std::unique_ptr<uint8_t, decltype(&free)> output(static_cast<uint8_t*>(malloc(outputBytes)), free);
+	if (!source || !output || str->Seek(dataOffset, GEM_STREAM_START) < 0 ||
+	    str->Read(source.get(), sourceBytes) != strret_t(sourceBytes)) return false;
 
-	str->Seek(DataOffset, GEM_STREAM_START);
-	//no idea if we have to swap this or not
-	//RASTERDATA
-	switch (BitCount) {
-		case 32:
-		case 24:
-		case 16:
-		case 8:
-			PaddedRowLength = size.w * BitCount / 8;
-			break;
-		case 4:
-			PaddedRowLength = (size.w >> 1);
-			break;
-		default:
-			Log(ERROR, "BMPImporter", "BitCount {} is not supported.", BitCount);
-			return false;
-	}
-
-	if (PaddedRowLength & 3) {
-		PaddedRowLength += 4 - (PaddedRowLength & 3);
-	}
-
-	void* rpixels = malloc(PaddedRowLength * size.h);
-	str->Read(rpixels, PaddedRowLength * size.h);
-	if (BitCount == 32) {
-		int numbytes = size.Area() * 4;
-		pixels = malloc(numbytes);
-		unsigned int* dest = (unsigned int*) pixels;
-		dest += size.Area();
-
-		const uint32_t* src = static_cast<const uint32_t*>(rpixels);
-		for (int i = size.h; i; i--) {
-			dest -= size.w;
-			// masks -> (A)BGR
-			for (int j = 0; j < size.w; ++j) {
-				uint32_t pixelValue = (isV3or5 ? ((src[j] & aMask) >> aNormShift) : 0xFF) << 24;
-				dest[j] = pixelValue | (((src[j] & bMask) >> bNormShift) << 16) | (((src[j] & gMask) >> gNormShift) << 8) | ((src[j] & rMask) >> rNormShift);
-			}
-			src += PaddedRowLength / 4;
-		}
-	} else if (BitCount == 24) {
-		//convert to 32 bits on the fly
-		int numbytes = size.Area() * 4;
-		pixels = malloc(numbytes);
-		unsigned int* dest = (unsigned int*) pixels;
-		dest += size.Area();
-		const unsigned char* src = (const unsigned char*) rpixels;
-		for (int i = size.h; i; i--) {
-			dest -= size.w;
-			// BGR
-			for (int j = 0; j < size.w; ++j)
-				dest[j] = (0xFF << 24) | (src[j * 3 + 0] << 16) |
-					(src[j * 3 + 1] << 8) | (src[j * 3 + 2]);
-			src += PaddedRowLength;
-		}
-		BitCount = 32;
-	} else if (BitCount == 8) {
-		Read8To8(rpixels);
-	} else if (BitCount == 4) {
-		Read4To8(rpixels);
-	}
-	free(rpixels);
-	return true;
-}
-
-void BMPImporter::Read8To8(const void* rpixels)
-{
-	pixels = malloc(size.Area());
-	unsigned char* dest = (unsigned char*) pixels;
-	dest += size.Area();
-	const unsigned char* src = (const unsigned char*) rpixels;
-	for (int i = size.h; i; i--) {
-		dest -= size.w;
-		memcpy(dest, src, size.w);
-		src += PaddedRowLength;
-	}
-}
-
-void BMPImporter::Read4To8(const void* rpixels)
-{
-	BitCount = 8;
-	pixels = malloc(size.Area());
-	unsigned char* dest = (unsigned char*) pixels;
-	dest += size.Area();
-	const unsigned char* src = (const unsigned char*) rpixels;
-	for (int i = size.h; i; i--) {
-		dest -= size.w;
-		for (int j = 0; j < size.w; ++j) {
-			if (!(j & 1)) {
-				dest[j] = ((unsigned) src[j / 2]) >> 4;
+	for (int y = 0; y < size.h; ++y) {
+		const uint8_t* src = source.get() + size_t(y) * rowBytes;
+		const int destY = topDown ? y : size.h - 1 - y;
+		uint8_t* dst = output.get() + size_t(destY) * size.w * outputBpp;
+		for (int x = 0; x < size.w; ++x) {
+			if (BitCount <= 8) {
+				const uint8_t index = BitCount == 8 ? src[x] : (x & 1 ? src[x / 2] & 15 : src[x / 2] >> 4);
+				if (index >= NumColors) return false;
+				dst[x] = index;
 			} else {
-				dest[j] = src[j / 2] & 15;
+				uint32_t value;
+				if (BitCount == 24) {
+					value = 0xff000000 | uint32_t(src[x * 3]) << 16 | uint32_t(src[x * 3 + 1]) << 8 | src[x * 3 + 2];
+				} else {
+					const uint8_t* p = src + size_t(x) * 4;
+					const uint32_t pixel = uint32_t(p[0]) | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 | uint32_t(p[3]) << 24;
+					value = (isV3or5 ? ((pixel & aMask) >> normshift(aMask)) : 0xff) << 24;
+					value |= ((pixel & bMask) >> normshift(bMask)) << 16 | ((pixel & gMask) >> normshift(gMask)) << 8 | ((pixel & rMask) >> normshift(rMask));
+				}
+				memcpy(dst + size_t(x) * 4, &value, 4);
 			}
 		}
-		src += PaddedRowLength;
 	}
+	pixels = output.release();
+	BitCount = outputBpp == 1 ? 8 : 32;
+	return true;
 }
 
 Holder<Sprite2D> BMPImporter::GetSprite2D()
 {
+	if (!pixels) return nullptr;
 	Holder<Sprite2D> spr;
 	if (BitCount == 32) {
 		constexpr uint32_t redMask = 0x000000ff;
@@ -226,12 +138,22 @@ Holder<Sprite2D> BMPImporter::GetSprite2D()
 		fmt.ColorKey = greenMask | (0xff << 24);
 
 		spr = VideoDriver->CreateSprite(Region(0, 0, size.w, size.h), nullptr, fmt);
-		memcpy(spr->LockSprite(), pixels, size.Area() * 4);
+		if (!spr || spr->GetPitch() < size_t(size.w) * 4) return nullptr;
+		auto* dst = static_cast<uint8_t*>(spr->LockSprite());
+		if (!dst) {
+			spr->UnlockSprite();
+			return nullptr;
+		}
+		const auto* src = static_cast<const uint8_t*>(pixels);
+		for (int y = 0; y < size.h; ++y) {
+			memcpy(dst + size_t(y) * spr->GetPitch(), src + size_t(y) * size.w * 4, size_t(size.w) * 4);
+		}
 		spr->UnlockSprite();
 	} else if (BitCount == 8) {
 		Holder<Palette> pal = MakeHolder<Palette>(PaletteColors, PaletteColors + NumColors);
 		PixelFormat fmt = PixelFormat::Paletted8Bit(pal, pal->GetColorAt(0) == ColorGreen, 0);
 		spr = VideoDriver->CreateSprite(Region(0, 0, size.w, size.h), nullptr, fmt);
+		if (!spr) return nullptr;
 		const uint8_t* src = static_cast<uint8_t*>(pixels);
 		const uint8_t* end = src + size.Area();
 		auto dst = spr->GetIterator();
@@ -239,24 +161,20 @@ Holder<Sprite2D> BMPImporter::GetSprite2D()
 			*dst = *src;
 		}
 	}
-
 	return spr;
 }
 
 int BMPImporter::GetPalette(int colors, Palette& pal)
 {
-	if (BitCount > 8) {
-		return ImageMgr::GetPalette(colors, pal);
-	}
+	if (colors < 0 || size_t(colors) > Palette::Colors {}.size()) return -1;
+	if (BitCount > 8) return ImageMgr::GetPalette(colors, pal);
+	if (!PaletteColors || NumColors == 0) return -1;
 
 	Palette::Colors buffer;
-	for (int i = 0; i < colors; i++) {
-		buffer[i].r = PaletteColors[i % NumColors].r;
-		buffer[i].g = PaletteColors[i % NumColors].g;
-		buffer[i].b = PaletteColors[i % NumColors].b;
+	for (int i = 0; i < colors; ++i) {
+		buffer[i] = PaletteColors[i % NumColors];
 		buffer[i].a = 0xff;
 	}
-
 	pal.CopyColors(0, buffer.cbegin(), buffer.cbegin() + colors);
 	return -1;
 }

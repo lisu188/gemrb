@@ -1,0 +1,83 @@
+// SPDX-FileCopyrightText: 2026 Contributors to the GemRB project <https://gemrb.org>
+// SPDX-License-Identifier: GPL-2.0-or-later
+#include "TableMgr.h"
+#include "TraversabilityCache.h"
+#include <cstdint>
+#include <iostream>
+#include <limits>
+
+namespace GemRB {
+@SIZE_CTOR@
+
+// The actual TableMgr interface and signed-field parser are used. This small
+// table supplies ordinary cells without plugin/resource discovery.
+class FixtureTable final : public TableMgr {
+    const std::vector<std::vector<std::string>> cells { { "2", "-1", "3" }, { "0", "4", "-3" } };
+    const std::string empty;
+public:
+    index_t GetRowCount() const override { return cells.size(); }
+    index_t GetColNamesCount() const override { return cells.front().size(); }
+    index_t GetColumnCount(index_t) const override { return cells.front().size(); }
+    const std::string& QueryField(index_t row, index_t column) const override { return cells.at(row).at(column); }
+    const std::string& QueryDefault() const override { return empty; }
+    index_t GetColumnIndex(const key_t&) const override { return npos; }
+    index_t GetRowIndex(const key_t&) const override { return npos; }
+    const std::string& GetColumnName(index_t) const override { return empty; }
+    const std::string& GetRowName(index_t) const override { return empty; }
+    index_t FindTableValue(index_t, long, index_t) const override { return npos; }
+    index_t FindTableValue(index_t, const key_t&, index_t) const override { return npos; }
+    index_t FindTableValue(const key_t&, long, index_t) const override { return npos; }
+    index_t FindTableValue(const key_t&, const key_t&, index_t) const override { return npos; }
+    bool Open(std::unique_ptr<DataStream>) override { return false; }
+};
+
+class GameData {
+    std::vector<int> weaponStyleAPRBonus;
+    Size weaponStyleAPRBonusMax;
+public:
+    size_t loads = 0;
+    AutoTable LoadTable(const ResRef&, bool) { ++loads; return std::make_shared<FixtureTable>(); }
+    int GetWeaponStyleAPRBonus(int, int);
+};
+@TABLE_FUNCTION@
+
+// The actual TraversabilityCache declaration determines fields and signatures.
+// Only the map's property size is replaced for this initialization contract.
+class Map {
+public:
+    Size props { 2, 3 };
+    Size PropsSize() const { return props; }
+};
+@CELL_INDEX@
+@CACHED_CTOR@
+@CACHED_RESERVE@
+@CACHED_CLEAR@
+@CACHE_VALIDATE@
+@CACHE_UPDATE_PREFIX@
+}
+
+int main() {
+    GemRB::GameData data;
+    if (data.GetWeaponStyleAPRBonus(0, 0) != 4 || data.GetWeaponStyleAPRBonus(0, 1) != 1 ||
+        data.GetWeaponStyleAPRBonus(1, 0) != 0 || data.GetWeaponStyleAPRBonus(1, 1) != 8 ||
+        data.GetWeaponStyleAPRBonus(1, 2) != 5 || data.GetWeaponStyleAPRBonus(99, 99) != 5 ||
+        data.loads != 1) return 1;
+    std::cout << "ordinary APR table values, caching and upper clamping: PASS\n";
+
+    GemRB::Map map;
+    GemRB::TraversabilityCache cache(&map);
+    if (!cache.Update() || cache.Size() != 2 * 3 * 12 * 16 + 1 || !cache.Update()) return 2;
+    const auto first = cache.GetCellData(0);
+    if (first.occupyingActor || first.state) return 3;
+    map.props = GemRB::Size(4, 2);
+    cache.MarkNewFrame();
+    if (!cache.Update() || cache.Size() != 4 * 2 * 12 * 16 + 1) return 4;
+    std::cout << "ordinary map-cache initialization, reuse and resize: PASS\n";
+
+    const size_t rowPitch = 32, cells = 32 * 36;
+    if (GemRB::TraversalCellIndex(0, 0, rowPitch, cells) != 0 ||
+        GemRB::TraversalCellIndex(31, 35, rowPitch, cells) != cells - 1 ||
+        GemRB::TraversalCellIndex(32, 0, rowPitch, cells) != cells ||
+        GemRB::TraversalCellIndex(0, 36, rowPitch, cells) != cells) return 5;
+    std::cout << "ordinary row/grid boundaries select the spare cell: PASS\n";
+}

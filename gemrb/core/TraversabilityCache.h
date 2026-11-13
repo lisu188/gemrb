@@ -94,7 +94,7 @@ public:
 		return traversabilityData.size();
 	}
 
-	void Update();
+	bool Update();
 
 private:
 	/**
@@ -160,7 +160,7 @@ private:
 	CachedActorsState cachedActorsState { 0 };
 	bool hasBeenUpdatedThisFrame { false };
 
-	void ValidateTraversabilityCacheSize();
+	bool ValidateTraversabilityCacheSize();
 
 	// BlockingShapeCache could have been a map of (actor's size category)->(blocking shape),
 	// but it's deliberately not a map; actors' size categories usually range from 0-3 (large creatures, e.g. dragons, having it at 7),

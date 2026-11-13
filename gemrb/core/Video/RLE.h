@@ -5,14 +5,17 @@
 #ifndef RLE_H
 #define RLE_H
 
+#include "ImageBufferSize.h"
 #include "Pixels.h"
 
 namespace GemRB {
 
 inline uint8_t* DecodeRLEData(const uint8_t* p, const Size& size, colorkey_t colorKey)
 {
-	size_t pixelCount = size.w * size.h;
+	size_t pixelCount = 0;
+	if (!p || !CheckedImageByteCount(size.w, size.h, 1, pixelCount)) return nullptr;
 	uint8_t* buffer = (uint8_t*) malloc(pixelCount);
+	if (!buffer) return nullptr;
 
 	size_t transQueue = 0;
 	for (size_t i = 0; i < pixelCount;) {

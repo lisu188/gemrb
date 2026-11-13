@@ -17,6 +17,8 @@
 #include "Logging/Logging.h"
 #include "Video/Pixels.h"
 
+#include <limits>
+
 namespace GemRB {
 
 enum CycleType {
@@ -458,7 +460,10 @@ bool ScriptedAnimation::UpdatePhase()
 		Delay = 0;
 
 		if (SequenceFlags & IE_VVC_LIGHTSPOT) {
-			light = CreateLight(Size(LightX, LightY), LightZ);
+			light = nullptr;
+			if (LightX <= ieDword(std::numeric_limits<int>::max()) && LightY <= ieDword(std::numeric_limits<int>::max())) {
+				light = CreateLight(Size(int(LightX), int(LightY)), LightZ);
+			}
 		}
 
 		if (Duration != 0xffffffff) {

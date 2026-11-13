@@ -1,0 +1,34 @@
+name: Video allocation compatibility
+on:
+  pull_request:
+    paths:
+      - gemrb/core/Video/Video.cpp
+      - gemrb/core/Video/Video.h
+      - gemrb/core/Video/RLE.h
+      - gemrb/core/Video/ImageBufferSize.h
+      - gemrb/core/Sprite2D.cpp
+      - gemrb/plugins/SDLVideo/SDLVideo.cpp
+      - gemrb/tests/security/test_video_rle_valid.py
+      - .github/workflows/video-allocation.yml
+  push:
+    branches: [master]
+    paths:
+      - gemrb/core/Video/Video.cpp
+      - gemrb/core/Video/Video.h
+      - gemrb/core/Video/RLE.h
+      - gemrb/core/Video/ImageBufferSize.h
+      - gemrb/core/Sprite2D.cpp
+      - gemrb/plugins/SDLVideo/SDLVideo.cpp
+      - gemrb/tests/security/test_video_rle_valid.py
+      - .github/workflows/video-allocation.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  ordinary-video:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check production decode, conversion and scaling methods
+        run: python3 gemrb/tests/security/test_video_rle_valid.py

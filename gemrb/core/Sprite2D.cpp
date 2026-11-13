@@ -125,12 +125,14 @@ bool Sprite2D::ConvertFormatTo(const PixelFormat& newfmt) noexcept
 	// we rely on the subclasses to handle most format conversions
 	if (format.RLE && newfmt.RLE == false && newfmt.Bpp == 1) {
 		uint8_t* rledata = static_cast<uint8_t*>(pixels);
-		pixels = DecodeRLEData(rledata, Frame.size, format.ColorKey);
+		uint8_t* decoded = DecodeRLEData(rledata, Frame.size, format.ColorKey);
+		if (!decoded) return false;
 		if (freePixels) {
 			free(rledata);
 		} else {
 			freePixels = true;
 		}
+		pixels = decoded;
 		format = newfmt;
 		assert(format.palette);
 		return true;

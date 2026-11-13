@@ -6,6 +6,7 @@
 
 #include "Geometry.h"
 
+#include "Video/ImageBufferSize.h"
 #include "Video/Video.h"
 
 namespace GemRB {
@@ -30,7 +31,10 @@ static Holder<Palette> GetLightPalette() noexcept
 
 Holder<Sprite2D> CreateLight(const Size& size, uint8_t intensity) noexcept
 {
-	uint8_t* px = (uint8_t*) calloc(size.w, size.h);
+	size_t bytes;
+	if (!CheckedImageByteCount(size.w, size.h, 1, bytes)) return nullptr;
+	uint8_t* px = static_cast<uint8_t*>(calloc(bytes, 1));
+	if (!px) return nullptr;
 
 	const Point& radii = size.Center();
 	const float maxr = std::max<float>(radii.x, radii.y);
@@ -48,10 +52,15 @@ Holder<Sprite2D> CreateLight(const Size& size, uint8_t intensity) noexcept
 
 		for (int x = q1.x; x >= 0; --x) {
 			// by the power of Pythagoras
-			uint8_t hyp = std::hypot<uint8_t>(x, q1.y);
-			uint8_t dist = static_cast<uint8_t>((hyp / maxr) * intensity);
-			assert(dist <= intensity);
-			uint8_t light = Clamp<uint8_t>(intensity - dist, 0, intensity);
+			uint8_t light = intensity;
+			if (maxr > 0) {
+				const uint64_t hyp = static_cast<uint64_t>(std::hypot(double(x), double(q1.y)));
+				const float distance = (static_cast<float>(hyp) / maxr) * intensity;
+				const float bounded = std::min(float(intensity), std::max(0.0f, distance));
+				uint8_t dist = static_cast<uint8_t>(bounded);
+				assert(dist <= intensity);
+				light = Clamp<uint8_t>(intensity - dist, 0, intensity);
+			}
 			px[(radii.y + q1.y) * size.w + radii.x + x] = light; // quad 1
 			px[(radii.y + q2.y) * size.w + radii.x - x] = light; // quad 2
 			px[(radii.y + q3.y) * size.w + radii.x - x] = light; // quad 3
