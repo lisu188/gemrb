@@ -1,0 +1,14 @@
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "gradle"
+    directory: "/platforms/android"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "vcpkg"
+    directory: "/platforms/windows"
+    schedule:
+      interval: "weekly"
