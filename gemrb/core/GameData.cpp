@@ -31,6 +31,9 @@
 #include "Scriptable/Actor.h"
 #include "Streams/FileStream.h"
 
+#include <cstdint>
+#include <limits>
+
 namespace GemRB {
 
 GEM_EXPORT std::unique_ptr<GameData> gamedata;
@@ -578,6 +581,7 @@ void GameData::ModifyColor(GUIColors idx, const Color& newColor)
 // wspatck bonus handling
 int GameData::GetWeaponStyleAPRBonus(int row, int col)
 {
+	if (row < 0 || col < 0) return 0;
 	// preload optimized version, since this gets called each tick several times
 	if (weaponStyleAPRBonusMax.IsZero()) {
 		AutoTable bonusTable = LoadTable("wspatck", true);
@@ -588,12 +592,15 @@ int GameData::GetWeaponStyleAPRBonus(int row, int col)
 
 		TableMgr::index_t rows = bonusTable->GetRowCount();
 		TableMgr::index_t cols = bonusTable->GetColumnCount();
-		weaponStyleAPRBonusMax.h = rows;
-		weaponStyleAPRBonusMax.w = cols;
-		weaponStyleAPRBonus.resize(rows * cols);
+		const size_t limit = std::min(size_t(std::numeric_limits<int>::max()), weaponStyleAPRBonus.max_size());
+		if (!rows || !cols || size_t(rows) > limit / size_t(cols)) {
+			weaponStyleAPRBonusMax.w = -1;
+			return 0;
+		}
+		std::vector<int> values(size_t(rows) * cols);
 		for (TableMgr::index_t i = 0; i < rows; i++) {
 			for (TableMgr::index_t j = 0; j < cols; j++) {
-				int tmp = bonusTable->QueryFieldSigned<int>(i, j);
+				int64_t tmp = bonusTable->QueryFieldSigned<int>(i, j);
 				// negative values relate to x/2, so we adjust them
 				// positive values relate to x, so we must times by 2
 				if (tmp < 0) {
@@ -601,9 +608,17 @@ int GameData::GetWeaponStyleAPRBonus(int row, int col)
 				} else {
 					tmp *= 2;
 				}
-				weaponStyleAPRBonus[i * cols + j] = tmp;
+				if (tmp > std::numeric_limits<int>::max()) {
+					weaponStyleAPRBonus.clear();
+					weaponStyleAPRBonusMax.w = -1;
+					return 0;
+				}
+				values[size_t(i) * cols + j] = int(tmp);
 			}
 		}
+		weaponStyleAPRBonus = std::move(values);
+		weaponStyleAPRBonusMax.h = int(rows);
+		weaponStyleAPRBonusMax.w = int(cols);
 	} else if (weaponStyleAPRBonusMax.w == -1) {
 		return 0;
 	}
@@ -614,7 +629,7 @@ int GameData::GetWeaponStyleAPRBonus(int row, int col)
 	if (col >= weaponStyleAPRBonusMax.w) {
 		col = weaponStyleAPRBonusMax.w - 1;
 	}
-	return weaponStyleAPRBonus[row * weaponStyleAPRBonusMax.w + col];
+	return weaponStyleAPRBonus[size_t(row) * weaponStyleAPRBonusMax.w + col];
 }
 
 bool GameData::ReadResRefTable(const ResRef& tableName, std::vector<ResRef>& data)
