@@ -39,6 +39,8 @@ bool MOSImporter::Import(DataStream* str)
 		str->ReadScalar<int, ieDword>(size.h);
 		str->ReadDword(layout.v2.NumBlocks);
 		str->ReadDword(layout.v2.BlockOffset);
+		if (layout.v2.BlockOffset > str->Size() ||
+		    layout.v2.NumBlocks > (str->Size() - layout.v2.BlockOffset) / 28) return false;
 	}
 
 	return true;
@@ -92,7 +94,7 @@ Holder<Sprite2D> MOSImporter::GetSprite2Dv2()
 	str->Seek(layout.v2.BlockOffset, GEM_STREAM_START);
 
 	MOSV2DataBlock dataBlock;
-	for (uint16_t i = 0; i < layout.v2.NumBlocks; ++i) {
+	for (ieDword i = 0; i < layout.v2.NumBlocks; ++i) {
 		str->ReadDword(dataBlock.pvrzPage);
 		str->ReadScalar<int, ieDword>(dataBlock.source.x);
 		str->ReadScalar<int, ieDword>(dataBlock.source.y);

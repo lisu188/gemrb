@@ -8,6 +8,7 @@
 #include "mve.h"
 
 #include <array>
+#include <limits>
 
 #ifdef WIN32
 	#include <profileapi.h>
@@ -157,13 +158,21 @@ MVEPlayer::FrameResult MVEPlayer::InitializeVideo(uint8_t version)
 	}
 	movieFormat = format > 0 ? Video::BufferFormat::RGB555 : Video::BufferFormat::RGBPAL8;
 
-	gstData.width = GST_READ_UINT16_LE(buffer.data()) << 3;
-	gstData.height = GST_READ_UINT16_LE(buffer.data() + 2) << 3;
-
-	size_t backBufSize = 2 * gstData.width * gstData.height * (format > 0 ? 2 : 1);
-	if (backBufSize > MAX_BACKBUFSIZE) {
+	const auto widthBlocks = GST_READ_UINT16_LE(buffer.data());
+	const auto heightBlocks = GST_READ_UINT16_LE(buffer.data() + 2);
+	if (widthBlocks > std::numeric_limits<guint16>::max() / 8 ||
+	    heightBlocks > std::numeric_limits<guint16>::max() / 8) {
 		return FrameResult::ERROR;
 	}
+	gstData.width = widthBlocks << 3;
+	gstData.height = heightBlocks << 3;
+
+	const size_t bytesPerPixel = 2 * (format > 0 ? 2 : 1);
+	if (!gstData.width || !gstData.height ||
+	    gstData.width > MAX_BACKBUFSIZE / bytesPerPixel / gstData.height) {
+		return FrameResult::ERROR;
+	}
+	const size_t backBufSize = bytesPerPixel * gstData.width * gstData.height;
 	if (videoBackBuffer.size() < backBufSize) {
 		videoBackBuffer.resize(backBufSize);
 	}

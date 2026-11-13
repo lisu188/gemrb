@@ -491,7 +491,7 @@ CritterEntry IniSpawn::ReadCreature(const DataFileMgr* inifile, StringView critt
 
 		ps = sscanf(s.c_str(), "[%hhu.%hhu.%hhu.%hhu.%hhu.%hhu.%hhu.%hhu.%hhu]", x, x + 1, x + 2, x + 3, x + 4, x + 5,
 			    x + 6, x + 7, x + 8);
-		if (ps == 0) {
+		if (ps <= 0) {
 			critter.ScriptName = ieVariable(s);
 			critter.Flags |= CF_CHECK_NAME;
 			memset(critter.Spec, -1, sizeof(critter.Spec));

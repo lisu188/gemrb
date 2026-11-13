@@ -10,6 +10,8 @@
 
 #include "Video/Video.h"
 
+#include <limits>
+
 using namespace GemRB;
 
 PLTImporter::~PLTImporter(void)
@@ -22,17 +24,35 @@ bool PLTImporter::Import(DataStream* str)
 	char Signature[8];
 	unsigned short unknown[4];
 
-	str->Read(Signature, 8);
+	if (str->Read(Signature, 8) != 8) return false;
 	if (strncmp(Signature, "PLT V1  ", 8) != 0) {
 		return false;
 	}
 
-	str->Read(unknown, 8);
-	str->ReadDword(Width);
-	str->ReadDword(Height);
-
-	pixels = malloc(Width * Height * 2);
-	str->Read(pixels, Width * Height * 2);
+	ieDword width = 0;
+	ieDword height = 0;
+	if (str->Read(unknown, 8) != 8 || str->ReadDword(width) != 4 || str->ReadDword(height) != 4) return false;
+	// Sprite dimensions and row offsets are signed ints. Bound the RGBA
+	// result before computing either the packed input or output byte count.
+	if (!width || !height || width > std::numeric_limits<int>::max() / 4u / height) return false;
+	const size_t inputSize = size_t(width) * height * 2;
+	if (inputSize > str->Remains()) return false;
+	auto* imported = static_cast<unsigned char*>(malloc(inputSize));
+	if (!imported) return false;
+	if (str->Read(imported, inputSize) != static_cast<strret_t>(inputSize)) {
+		free(imported);
+		return false;
+	}
+	for (size_t i = 1; i < inputSize; i += 2) {
+		if (imported[i] >= 8) {
+			free(imported);
+			return false;
+		}
+	}
+	free(pixels);
+	pixels = imported;
+	Width = width;
+	Height = height;
 	return true;
 }
 
@@ -43,7 +63,8 @@ Holder<Sprite2D> PLTImporter::GetSprite2D(unsigned int type, ieDword paletteInde
 	for (int i = 0; i < 8; i++) {
 		Palettes[i] = core->GetPalette256(paletteIndex[pperm[i]] >> (8 * type));
 	}
-	unsigned char* p = (unsigned char*) malloc(Width * Height * 4);
+	unsigned char* p = (unsigned char*) malloc(size_t(Width) * Height * 4);
+	if (!p) return nullptr;
 	unsigned char* dest = p;
 	const unsigned char* src = nullptr;
 	for (int y = Height - 1; y >= 0; y--) {
