@@ -1,0 +1,24 @@
+name: Fog reserve compatibility
+on:
+  pull_request:
+    paths:
+      - gemrb/core/GUI/MapControl.cpp
+      - gemrb/tests/security/test_map_fog_valid.py
+      - .github/workflows/fog-reserve.yml
+  push:
+    branches: [master]
+    paths:
+      - gemrb/core/GUI/MapControl.cpp
+      - gemrb/tests/security/test_map_fog_valid.py
+      - .github/workflows/fog-reserve.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  ordinary-fog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check production fog loop with ordinary map and renderer fixtures
+        run: python3 gemrb/tests/security/test_map_fog_valid.py
